@@ -56,6 +56,6 @@ jobs:
       run: |
         git config --global user.email "devpipelinepulse@gmail.com"
         git config --global user.name "devpipeline1"
-        git add helm/myhelm/values.yaml
+        git add project/values.yaml
         git commit -m "Update tag in Helm chart"
         git push
