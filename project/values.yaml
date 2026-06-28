@@ -1,0 +1,14 @@
+# Default values for project.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+
+env: prod
+app: myapp-prod
+image:
+  repository: devpipeline/ravi
+  # This sets the pull policy for images.
+  tag: "v1"
+
+metadata:
+   name: nginx-dep-prod
