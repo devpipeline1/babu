@@ -8,7 +8,7 @@ app: myapp-prod
 image:
   repository: devpipeline/ravi
   # This sets the pull policy for images.
-  tag: "28315436524"
+  tag: "28315532670"
 
 metadata:
    name: nginx-dep-prod
