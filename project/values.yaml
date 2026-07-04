@@ -6,7 +6,7 @@
 env: flipkart
 app: myapp-prod
 image:
-  repository: devpipeline/ravi
+  repository: devpipeline/nginx
   # This sets the pull policy for images.
   tag: "28315532670"
 
