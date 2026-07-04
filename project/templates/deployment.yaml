@@ -19,4 +19,4 @@ spec:
       spec:
          containers:
          - name: nginx
-           image: {{ .Values.image.repository }}:{{ .Values.
+           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
