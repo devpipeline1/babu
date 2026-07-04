@@ -3,7 +3,7 @@
 # Declare variables to be passed into your templates.
 
 
-env: prod
+env: flipkart
 app: myapp-prod
 image:
   repository: devpipeline/ravi
