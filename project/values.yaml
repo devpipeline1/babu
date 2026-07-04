@@ -8,7 +8,7 @@ app: myapp-prod
 image:
   repository: devpipeline/nginx
   # This sets the pull policy for images.
-  tag: "28695854048"
+  tag: "28695951801"
 
 metadata:
    name: nginx-dep-prod
