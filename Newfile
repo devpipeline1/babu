@@ -2852,3 +2852,170 @@ Switched to context "application-eks".
 
 $ kubectl config current-context
 application-eks
+
+curl -L \
+  https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml \
+  -o online-boutique.yaml
+
+$ kubectl create ns online-boutique
+namespace/online-boutique created
+
+kubectl apply \
+  -n online-boutique \
+  -f online-boutique.yaml
+
+$ kubectl -n online-boutique get pods,deploy,svc
+NAME                                         READY   STATUS    RESTARTS   AGE
+pod/adservice-748f6f68d4-gp6z9               1/1     Running   0          98s
+pod/cartservice-9479b6c-c9ghr                1/1     Running   0          97s
+pod/checkoutservice-8458467c66-xbsjj         1/1     Running   0          96s
+pod/currencyservice-64b75b748-22l7w          1/1     Running   0          97s
+pod/emailservice-76c84c79d6-q99c7            1/1     Running   0          95s
+pod/frontend-6685976567-7ppwm                1/1     Running   0          98s
+pod/loadgenerator-549c665d59-n947w           1/1     Running   0          97s
+pod/paymentservice-5df7f57d78-rmp77          1/1     Running   0          96s
+pod/productcatalogservice-7dd48bf974-48dt4   1/1     Running   0          95s
+pod/recommendationservice-bb9db87fd-svvx7    1/1     Running   0          96s
+pod/redis-cart-788fbddc7-4ht45               1/1     Running   0          97s
+pod/shippingservice-768bf5c46b-f8ghn         1/1     Running   0          95s
+
+NAME                                    READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/adservice               1/1     1            1           98s
+deployment.apps/cartservice             1/1     1            1           97s
+deployment.apps/checkoutservice         1/1     1            1           96s
+deployment.apps/currencyservice         1/1     1            1           97s
+deployment.apps/emailservice            1/1     1            1           96s
+deployment.apps/frontend                1/1     1            1           98s
+deployment.apps/loadgenerator           1/1     1            1           97s
+deployment.apps/paymentservice          1/1     1            1           96s
+deployment.apps/productcatalogservice   1/1     1            1           95s
+deployment.apps/recommendationservice   1/1     1            1           97s
+deployment.apps/redis-cart              1/1     1            1           97s
+deployment.apps/shippingservice         1/1     1            1           95s
+
+NAME                            TYPE           CLUSTER-IP       EXTERNAL-IP                                                                      PORT(S)        AGE
+service/adservice               ClusterIP      172.20.136.209   <none>                                                                           9555/TCP       98s
+service/cartservice             ClusterIP      172.20.20.189    <none>                                                                           7070/TCP       97s
+service/checkoutservice         ClusterIP      172.20.173.34    <none>                                                                           5050/TCP       96s
+service/currencyservice         ClusterIP      172.20.217.84    <none>                                                                           7000/TCP       97s
+service/emailservice            ClusterIP      172.20.233.246   <none>                                                                           5000/TCP       96s
+service/frontend                ClusterIP      172.20.245.19    <none>                                                                           80/TCP         98s
+service/frontend-external       LoadBalancer   172.20.199.196   k8s-onlinebo-frontend-7a350731ac-5e55a14dc8ced378.elb.ap-south-1.amazonaws.com   80:31721/TCP   98s
+service/paymentservice          ClusterIP      172.20.127.34    <none>                                                                           50051/TCP      96s
+service/productcatalogservice   ClusterIP      172.20.10.13     <none>                                                                           3550/TCP       95s
+service/recommendationservice   ClusterIP      172.20.228.143   <none>                                                                           8080/TCP       96s
+service/redis-cart              ClusterIP      172.20.97.200    <none>                                                                           6379/TCP       97s
+service/shippingservice         ClusterIP      172.20.125.31    <none>                                                                           50051/TCP      95s
+
+Make the frontend-external service explicitly internet-facing
+
+kubectl annotate service frontend-external \
+  -n online-boutique \
+  service.beta.kubernetes.io/aws-load-balancer-type=external \
+  service.beta.kubernetes.io/aws-load-balancer-scheme=internet-facing \
+  service.beta.kubernetes.io/aws-load-balancer-nlb-target-type=ip \
+  --overwrite
+
+$ nslookup k8s-onlinebo-frontend-485b9553b1-2cbca725335a1089.elb.ap-south-1.amazonaws.com
+Server:  UnKnown
+Address:  192.168.0.1
+
+Non-authoritative answer:
+Name:    k8s-onlinebo-frontend-485b9553b1-2cbca725335a1089.elb.ap-south-1.amazonaws.com
+Address:  3.109.234.217
+
+
+Windows@DESKTOP-9HVNDLS MINGW64 /c/eksproject11/application-code/microservices-demo (main)
+$ curl -I http://k8s-onlinebo-frontend-485b9553b1-2cbca725335a1089.elb.ap-south-1.amazonaws.com
+HTTP/1.1 200 OK
+Set-Cookie: shop_session-id=3a43c99f-12f9-4b0d-a0e3-d1a49ea35bb6; Max-Age=172800
+Date: Sat, 05 Sep 2026 20:17:25 GMT
+Content-Type: text/html; charset=utf-8
+
+
+generate the load by loadgenerator
+
+$ kubectl get deployment loadgenerator -n online-boutique
+NAME            READY   UP-TO-DATE   AVAILABLE   AGE
+loadgenerator   1/1     1            1           9m25s
+
+Windows@DESKTOP-9HVNDLS MINGW64 /c/eksproject11/application-code/microservices-demo (main)
+$ kubectl logs deployment/loadgenerator \
+  -n online-boutique \
+  --tail=50
+Defaulted container "main" out of: main, frontend-check (init)
+GET      /product/1YMWWN1N4O                                                               72     0(0.00%) |     33      20     128     28 |    0.10        0.00
+GET      /product/2ZYFJ3GM2N                                                               64     0(0.00%) |     30      20     100     27 |    0.10        0.00
+GET      /product/66VCHSJNUP                                                               68     0(0.00%) |     29      19      56     27 |    0.10        0.00
+GET      /product/6E92ZMYYFZ                                                               61     0(0.00%) |     29      19      89     26 |    0.10        0.00
+GET      /product/9SIQT8TOJO                                                               90     0(0.00%) |     33      18      94     29 |    0.10        0.00
+GET      /product/L9ECAV7KIM                                                               77     0(0.00%) |     29      20      63     28 |    0.10        0.00
+GET      /product/LS4PSXUNUM                                                               69     0(0.00%) |     31      20      80     29 |    0.10        0.00
+GET      /product/OLJCESPC7Z                                                               60     0(0.00%) |     29      20      48     28 |    0.20        0.00
+POST     /setCurrency                                                                      99     0(0.00%) |     48      31     120     44 |    0.30        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                      1123     0(0.00%) |     35      16     254     31 |    2.10        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      /                                                                                 65     0(0.00%) |     49      29     203     44 |    0.10        0.00
+GET      /cart                                                                            140     0(0.00%) |     28      16      93     25 |    0.20        0.00
+POST     /cart                                                                            144     0(0.00%) |     43      24     141     38 |    0.60        0.00
+POST     /cart/checkout                                                                    49     0(0.00%) |     47      27     254     40 |    0.30        0.00
+GET      /product/0PUK6V6EV0                                                               65     0(0.00%) |     29      20      61     26 |    0.30        0.00
+GET      /product/1YMWWN1N4O                                                               73     0(0.00%) |     33      20     128     28 |    0.20        0.00
+GET      /product/2ZYFJ3GM2N                                                               64     0(0.00%) |     30      20     100     27 |    0.10        0.00
+GET      /product/66VCHSJNUP                                                               68     0(0.00%) |     29      19      56     27 |    0.10        0.00
+GET      /product/6E92ZMYYFZ                                                               61     0(0.00%) |     29      19      89     26 |    0.10        0.00
+GET      /product/9SIQT8TOJO                                                               90     0(0.00%) |     33      18      94     29 |    0.20        0.00
+GET      /product/L9ECAV7KIM                                                               77     0(0.00%) |     29      20      63     28 |    0.20        0.00
+GET      /product/LS4PSXUNUM                                                               70     0(0.00%) |     31      20      80     29 |    0.10        0.00
+GET      /product/OLJCESPC7Z                                                               60     0(0.00%) |     29      20      48     28 |    0.20        0.00
+POST     /setCurrency                                                                     100     0(0.00%) |     48      31     120     44 |    0.30        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                      1126     0(0.00%) |     35      16     254     31 |    3.00        0.00
+
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+GET      /                                                                                 65     0(0.00%) |     49      29     203     44 |    0.00        0.00
+GET      /cart                                                                            141     0(0.00%) |     28      16      93     25 |    0.20        0.00
+POST     /cart                                                                            145     0(0.00%) |     43      24     141     38 |    0.50        0.00
+POST     /cart/checkout                                                                    50     0(0.00%) |     47      27     254     39 |    0.30        0.00
+GET      /product/0PUK6V6EV0                                                               65     0(0.00%) |     29      20      61     26 |    0.20        0.00
+GET      /product/1YMWWN1N4O                                                               74     0(0.00%) |     33      20     128     28 |    0.30        0.00
+GET      /product/2ZYFJ3GM2N                                                               64     0(0.00%) |     30      20     100     27 |    0.10        0.00
+GET      /product/66VCHSJNUP                                                               69     0(0.00%) |     29      19      56     27 |    0.00        0.00
+GET      /product/6E92ZMYYFZ                                                               62     0(0.00%) |     28      19      89     26 |    0.00        0.00
+GET      /product/9SIQT8TOJO                                                               90     0(0.00%) |     33      18      94     29 |    0.20        0.00
+GET      /product/L9ECAV7KIM                                                               77     0(0.00%) |     29      20      63     28 |    0.20        0.00
+GET      /product/LS4PSXUNUM                                                               70     0(0.00%) |     31      20      80     29 |    0.10        0.00
+GET      /product/OLJCESPC7Z                                                               60     0(0.00%) |     29      20      48     28 |    0.20        0.00
+POST     /setCurrency                                                                     101     0(0.00%) |     48      31     120     44 |    0.30        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                      1133     0(0.00%) |     35      16     254     31 |    2.60        0.00
+
+
+
+$ kubectl get pods -n online-boutique \
+  -l app=loadgenerator
+NAME                             READY   STATUS    RESTARTS   AGE
+loadgenerator-549c665d59-n947w   1/1     Running   0          10m
+
+
+
+Verify Alloy is receiving application logs because we configure like below
+
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.kubernetes.pods.targets
+  forward_to = [loki.write.monitoring.receiver]
+}
+
+Logql:
+=====
+{cluster="application-eks", environment="demo"}
+
+{cluster="application-eks", environment="demo", namespace="online-boutique"}
