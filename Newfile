@@ -1,1 +1,1645 @@
 
+STEP 1  Network                         ✅ DONE
+   |
+STEP 2  Application EKS                 ← NOW
+   |
+STEP 3  Monitoring EKS
+   |
+STEP 4  AWS Load Balancer Controller
+   |
+STEP 5  S3 + IAM
+   |
+STEP 6  Prometheus HA
+   |
+STEP 7  Thanos
+   |
+STEP 8  Loki
+   |
+STEP 9  Tempo
+   |
+STEP 10 Alloy
+   |
+STEP 11 Grafana
+   |
+STEP 12 End-to-End Validation
+
+
+Step 2 — Create Application EKS
+2.1 First load your network variables
+
+2.2 Check your tools
+aws --version
+eksctl version
+kubectl version --client
+
+2.3 Create Application EKS configuration
+
+vi application-eks.yaml
+
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: application-eks
+  region: ap-south-1
+  version: "1.36"
+
+iam:
+  withOIDC: true
+
+vpc:
+  id: vpc-0fb435c6f4f8727e1
+
+  subnets:
+    private:
+      app-private-a:
+        id: subnet-0355b32c991dcb07b
+      app-private-b:
+        id: subnet-0a718745b22d757ce
+
+managedNodeGroups:
+  - name: application-workers
+    instanceType: t3.large
+    minSize: 2
+    desiredCapacity: 2
+    maxSize: 3
+    privateNetworking: true
+    volumeSize: 50
+    volumeType: gp3
+    labels:
+      workload: application
+    tags:
+      Name: application-eks-worker
+      Environment: demo
+      Cluster: application-eks
+      Workload: application
+addons:
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+  - name: aws-ebs-csi-driver
+
+
+The important part is: privateNetworking: true
+So our application EC2 worker nodes will be here:
+
+Application VPC
+10.10.0.0/16
+
+        PRIVATE SUBNETS
+
+10.10.11.0/24       10.10.12.0/24
+     AZ1                 AZ2
+      |                    |
+      +--------+-----------+
+               |
+        Application EKS
+        Worker Nodes
+
+They will not receive public IP addresses.
+outbound internet traffic will use:
+
+Application EKS Node
+       |
+       ↓
+Private Route Table
+       |
+       ↓
+NAT Gateway
+       |
+       ↓
+Internet Gateway
+       |
+       ↓
+Internet
+
+About EBS CSI
+
+We are going to need persistent storage later for:
+Prometheus
+Thanos Store Gateway
+Loki
+Tempo
+
+
+Prometheus
+    |
+    ↓
+PersistentVolumeClaim
+    |
+    ↓
+EBS Volume
+
+create the cluster:
+eksctl create cluster \
+  -f application-eks.yaml
+
+This will take several minutes.
+
+eksctl create command will create below component:
+EKS Control Plane
+      |
+      +-- IAM
+      |
+      +-- Security Groups
+      |
+      +-- ENIs
+      |
+      +-- Managed Node Group
+      |
+      +-- EC2 instances
+      |
+      +-- EKS Add-ons
+
+2.6 Verify Application EKS
+
+aws eks describe-cluster \
+  --region ap-south-1 \
+  --name application-eks \
+  --query 'cluster.status'
+
+Update kubeconfig
+aws eks update-kubeconfig \
+  --region ap-south-1 \
+  --name application-eks
+
+kubectl get nodes
+
+Notice the private IPs: 
+10.10.11.x
+10.10.12.x
+
+2.9 Verify EKS add-ons
+aws eks list-addons \
+  --region ap-south-1 \
+  --cluster-name application-eks
+
+vpc-cni
+coredns
+kube-proxy
+aws-ebs-csi-driver
+
+kubectl get pods -n kube-system
+
+You should see components such as:
+
+aws-node-xxxxx
+aws-node-yyyyy
+coredns-xxxxx
+coredns-yyyyy
+kube-proxy-xxxxx
+kube-proxy-yyyyy
+ebs-csi-controller-xxxxx
+ebs-csi-node-xxxxx
+
+
+2.10 Verify EBS CSI
+kubectl get pods -n kube-system | grep ebs
+
+
+2.11 Verify Application EKS networking
+Let's confirm that the nodes really are using the private subnets.
+aws ec2 describe-instances \
+  --region ap-south-1 \
+  --filters \
+    "Name=tag:eks:cluster-name,Values=application-eks" \
+    "Name=instance-state-name,Values=running" \
+  --query 'Reservations[].Instances[].{
+    InstanceId:InstanceId,
+    PrivateIP:PrivateIpAddress,
+    Subnet:SubnetId,
+    AZ:Placement.AvailabilityZone
+  }' \
+  --output table
+
+3.1 Verify OIDC
+
+in our eks cluster creation file we have
+iam:
+  withOIDC: true
+
+Just verify it:
+
+eksctl utils associate-iam-oidc-provider \
+  --region ap-south-1 \
+  --cluster application-eks \
+  --approve
+
+it says the provider already exists, that's fine.
+
+
+                    AWS
+                     |
+          +----------+----------+
+          |                     |
+          ↓                     ↓
+ Application VPC          Monitoring VPC
+ 10.10.0.0/16             10.20.0.0/16
+          |                     |
+          ↓                     |
+ Application EKS                |
+          |                     |
+   2 private nodes              |
+          |                     |
+          +---- VPC Peering ----+
+
+
+2 worker nodes
+Both are Ready
+Nodes are in the two private subnets:
+10.10.11.185 → AZ ap-south-1a
+10.10.12.30 → AZ ap-south-1b
+Nodes have no public IPs
+EBS CSI is installed
+VPC CNI, CoreDNS and kube-proxy are installed
+
+Create Monitoring EKS
+====================
+source network-output.env
+
+echo $MON_VPC_ID
+echo $MON_PRIVATE_1_ID
+echo $MON_PRIVATE_2_ID
+echo $MON_CLUSTER_NAME
+
+vi monitoring-eks.yaml
+
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: monitoring-eks
+  region: ap-south-1
+  version: "1.36"
+
+iam:
+  withOIDC: true
+
+vpc:
+  id: $MON_VPC_ID
+
+  subnets:
+    private:
+      monitoring-private-a:
+        id: $MON_PRIVATE_1_ID
+
+      monitoring-private-b:
+        id: $MON_PRIVATE_2_ID
+
+managedNodeGroups:
+  - name: monitoring-workers
+    instanceType: t3.xlarge
+    minSize: 2
+    desiredCapacity: 2
+    maxSize: 3
+
+    privateNetworking: true
+    volumeSize: 50
+    volumeType: gp3
+    labels:
+      workload: monitoring
+
+    tags:
+      Name: monitoring-eks-worker
+      Environment: demo
+      Cluster: monitoring-eks
+      Workload: monitoring
+
+addons:
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+  - name: aws-ebs-csi-driver
+  - name: metrics-server
+
+Replace VPC id and subnetid's
+
+eksctl create cluster \
+  -f monitoring-eks.yaml
+
+Connect kubectl to Monitoring EKS
+=================================
+aws eks update-kubeconfig \
+  --region ap-south-1 \
+  --name monitoring-eks
+
+kubectl get nodes -o wide
+
+10.20.11.x
+10.20.12.x
+
+Rename contest so it will be easy to switch clusters
+kubectl config rename-context \
+  $(kubectl config get-contexts -o name | grep 'cluster/application-eks') \
+  application-eks
+
+kubectl config rename-context \
+  $(kubectl config get-contexts -o name | grep 'cluster/monitoring-eks') \
+  monitoring-eks
+
+kubectl config get-contexts 
+kubectl config use-context application-eks
+kubectl config use-context monitoring-eks
+
+Verify Monitoring EKS add-ons
+aws eks list-addons \
+  --region ap-south-1 \
+  --cluster-name monitoring-eks
+
+Verify EBS CSI
+kubectl get pods -n kube-system | grep ebs
+
+
+
+                    AWS
+                     |
+        +------------+-------------+
+        |                          |
+        ↓                          ↓
+ Application VPC              Monitoring VPC
+  10.10.0.0/16                 10.20.0.0/16
+        |                          |
+        ↓                          ↓
+ Application EKS              Monitoring EKS
+        |                          |
+     2 nodes                    2 nodes
+        |                          |
+        +------ VPC Peering -------+
+
+
+
+AWS Load Balancer Controller
+===========================
+Application EKS
+      |
+      ↓
+AWS Load Balancer Controller
+      |
+      ↓
+Application Frontend LB
+
+
+
+Monitoring EKS
+      |
+      ↓
+AWS Load Balancer Controller
+      |
+      +----> Grafana public LB
+      |
+      +----> Prometheus internal NLB
+      |
+      +----> Loki internal NLB
+      |
+      +----> Tempo internal NLB
+
+so we have to install load balancer controller on both the clusters.
+application-eks
+       |
+       └── AWS Load Balancer Controller
+
+monitoring-eks
+       |
+       └── AWS Load Balancer Controller
+
+
+First verify AWS CLI identity
+
+aws sts get-caller-identity
+
+Verify OIDC for Application EKS
+
+aws eks describe-cluster \
+  --region ap-south-1 \
+  --name application-eks \
+  --query 'cluster.identity.oidc.issuer' \
+  --output text
+
+Expected:
+https://oidc.eks.ap-south-1.amazonaws.com/id/XXXXXXXX
+
+aws eks describe-cluster \
+  --region ap-south-1 \
+  --name monitoring-eks \
+  --query 'cluster.identity.oidc.issuer' \
+  --output text
+
+Check whether the AWS Load Balancer Controller policy already exists
+aws iam get-policy \
+  --policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/AWSLoadBalancerControllerIAMPolicy
+
+
+Install Helm repository
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update
+helm search repo eks/aws-load-balancer-controller
+
+Create the IAM policy if its not exit
+
+Download the current AWS policy:
+curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+Create policy:
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam_policy.json
+
+Verify:
+aws iam get-policy \
+  --policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/AWSLoadBalancerControllerIAMPolicy
+
+
+Create Monitoring IAM service account for monitoring EKS
+
+eksctl create iamserviceaccount \
+  --cluster monitoring-eks \
+  --region ap-south-1 \
+  --namespace kube-system \
+  --name aws-load-balancer-controller \
+  --role-name AmazonEKSLoadBalancerControllerRole-monitoring \
+  --attach-policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/AWSLoadBalancerControllerIAMPolicy \
+  --approve
+
+Install controller in Monitoring EKS
+
+helm upgrade --install aws-load-balancer-controller \
+  eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=monitoring-eks \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --set region=ap-south-1 \
+  --set vpcId="$MON_VPC_ID"
+
+kubectl get pods \
+  -n kube-system \
+  -l app.kubernetes.io/name=aws-load-balancer-controller
+
+kubectl get deployment \
+  aws-load-balancer-controller \
+  -n kube-system
+
+Switch to Application EKS:
+
+kubectl config use-context application-eks
+
+Create IAM service account for Application EKS:
+eksctl create iamserviceaccount \
+  --cluster application-eks \
+  --region ap-south-1 \
+  --namespace kube-system \
+  --name aws-load-balancer-controller \
+  --role-name AmazonEKSLoadBalancerControllerRole-application \
+  --attach-policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/AWSLoadBalancerControllerIAMPolicy \
+  --approve
+
+AWS IAM
+   |
+   ↓
+AmazonEKSLoadBalancerControllerRole-application
+   |
+   ↓
+Kubernetes ServiceAccount
+aws-load-balancer-controller
+   |
+   ↓
+AWS Load Balancer Controller
+
+kubectl get serviceaccount \
+  aws-load-balancer-controller \
+  -n kube-system
+
+Install AWS Load Balancer Controller
+
+helm upgrade --install aws-load-balancer-controller \
+  eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=application-eks \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --set region=ap-south-1 \
+  --set vpcId="$APP_VPC_ID"
+
+kubectl get pods \
+  -n kube-system \
+  -l app.kubernetes.io/name=aws-load-balancer-controller
+
+Expected:
+
+NAME                                            READY   STATUS
+aws-load-balancer-controller-xxxxxxxxx-xxxxx    1/1     Running
+
+
+kubectl get deployment \
+  aws-load-balancer-controller \
+  -n kube-system
+
+kubectl logs \
+  -n kube-system \
+  deployment/aws-load-balancer-controller \
+  --tail=100
+
+                    AWS
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+     APP VPC                 MONITORING VPC
+     10.10.0.0/16            10.20.0.0/16
+          │                     │
+    application-eks        monitoring-eks
+          │                     │
+          │                     │
+     AWS LBC 2 pods        AWS LBC 2 pods
+          │                     │
+          └────── VPC PEERING ──┘
+                pcx-06f3d55a3c15322ff
+
+After load balancer we need to create S3 + IAM for Thanos, Loki and Tempo
+
+Switch to monitoring cluster
+kubectl config use-context monitoring-eks
+
+
+✅ AWS VPCs
+✅ VPC Peering
+✅ Private/Public Subnets
+✅ NAT Gateways
+✅ Application EKS
+✅ Monitoring EKS
+✅ OIDC Application EKS
+✅ OIDC Monitoring EKS
+✅ AWSLoadBalancerControllerIAMPolicy
+✅ Application LBC IAM Role/ServiceAccount
+✅ Monitoring LBC IAM Role/ServiceAccount
+⬜ AWS Load Balancer Controller — Monitoring EKS
+⬜ AWS Load Balancer Controller — Application EKS
+⬜ S3 buckets + IAM
+⬜ Prometheus HA
+⬜ Thanos
+⬜ Loki
+⬜ Tempo
+⬜ Alloy
+⬜ Grafana
+⬜ Online Boutique
+⬜ End-to-end observability validation
+
+
+Next
+
+                    AWS S3
+                      │
+       ┌──────────────┼──────────────┐
+       │              │              │
+       ▼              ▼              ▼
+  Thanos S3       Loki S3         Tempo S3
+  Metrics          Logs            Traces
+       │              │              │
+       ▼              ▼              ▼
+  Thanos           Loki            Tempo
+
+
+Thanos ServiceAccount ──> Thanos IAM Role ──> Thanos S3
+Loki ServiceAccount   ──> Loki IAM Role   ──> Loki S3
+Tempo ServiceAccount  ──> Tempo IAM Role  ──> Tempo S3
+
+                         AWS
+                          │
+                    ┌─────┴─────┐
+                    │     S3    │
+                    └─────┬─────┘
+                          │
+          ┌───────────────┼────────────────┐
+          │               │                │
+          ▼               ▼                ▼
+     Thanos S3        Loki S3          Tempo S3
+      metrics           logs            traces
+          ▲               ▲                ▲
+          │               │                │
+    Thanos Pods       Loki Pods        Tempo Pods
+          │               │                │
+          └──────────── Monitoring EKS ─────┘
+
+
+We'll use three separate buckets:
+
+thanos-<account-id>-ap-south-1
+loki-<account-id>-ap-south-1
+tempo-<account-id>-ap-south-1
+
+Make sure AWS identity is correct
+aws sts get-caller-identity
+
+{
+    "UserId": "045667250694",
+    "Account": "045667250694",
+    "Arn": "arn:aws:iam::045667250694:root"
+}
+
+
+export AWS_REGION=ap-south-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+export THANOS_BUCKET="thanos-${AWS_ACCOUNT_ID}-${AWS_REGION}"
+export LOKI_BUCKET="loki-${AWS_ACCOUNT_ID}-${AWS_REGION}"
+export TEMPO_BUCKET="tempo-${AWS_ACCOUNT_ID}-${AWS_REGION}"
+
+Verify:
+
+echo $AWS_ACCOUNT_ID
+echo $THANOS_BUCKET
+echo $LOKI_BUCKET
+echo $TEMPO_BUCKET
+
+Expected:
+
+045667250694
+thanos-045667250694-ap-south-1
+loki-045667250694-ap-south-1
+tempo-045667250694-ap-south-1
+
+
+Create the three S3 buckets
+
+$ aws s3api create-bucket \
+  --bucket "$THANOS_BUCKET" \
+  --region "$AWS_REGION" \
+  --create-bucket-configuration LocationConstraint="$AWS_REGION"
+
+$ aws s3api create-bucket \
+  --bucket "$LOKI_BUCKET" \
+  --region "$AWS_REGION" \
+  --create-bucket-configuration LocationConstraint="$AWS_REGION"
+
+$ aws s3api create-bucket \
+  --bucket "$TEMPO_BUCKET" \
+  --region "$AWS_REGION" \
+  --create-bucket-configuration LocationConstraint="$AWS_REGION"
+
+Verify:
+$ aws s3 ls |grep -E "thanos|loki|tempo"
+2026-09-05 19:12:31 loki-045667250694-ap-south-1
+2026-09-05 19:12:37 tempo-045667250694-ap-south-1
+2026-09-05 19:12:21 thanos-045667250694-ap-south-1
+
+Enable S3 versioning
+
+aws s3api put-bucket-versioning \
+  --bucket "$THANOS_BUCKET" \
+  --versioning-configuration Status=Enabled
+
+aws s3api put-bucket-versioning \
+  --bucket "$LOKI_BUCKET" \
+  --versioning-configuration Status=Enabled
+
+aws s3api put-bucket-versioning \
+  --bucket "$TEMPO_BUCKET" \
+  --versioning-configuration Status=Enabled
+
+
+Enable default S3 encryption:
+==============================
+aws s3api put-bucket-encryption \
+  --bucket "$THANOS_BUCKET" \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+aws s3api put-bucket-encryption \
+  --bucket "$LOKI_BUCKET" \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+aws s3api put-bucket-encryption \
+  --bucket "$TEMPO_BUCKET" \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+Verify one:
+aws s3api get-bucket-encryption \
+  --bucket "$THANOS_BUCKET"
+
+Create IAM policies:
+==================
+Thanos IAM Role
+       │
+       └── Thanos S3 only
+
+Loki IAM Role
+       │
+       └── Loki S3 only
+
+Tempo IAM Role
+       │
+       └── Tempo S3 only
+
+Loki ❌ cannot access Thanos bucket
+Tempo ❌ cannot access Loki bucket
+Thanos ❌ cannot access Tempo bucket
+
+
+Thanos IAM policy:
+==================
+
+cat > thanos-s3-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ThanosBucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::${THANOS_BUCKET}"
+    },
+    {
+      "Sid": "ThanosObjectAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::${THANOS_BUCKET}/*"
+    }
+  ]
+}
+EOF
+
+aws iam create-policy \
+  --policy-name ThanosS3AccessPolicy \
+  --policy-document file://thanos-s3-policy.json
+
+Loki IAM policy:
+===============
+
+cat > loki-s3-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LokiBucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::${LOKI_BUCKET}"
+    },
+    {
+      "Sid": "LokiObjectAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::${LOKI_BUCKET}/*"
+    }
+  ]
+}
+EOF
+
+
+aws iam create-policy \
+  --policy-name LokiS3AccessPolicy \
+  --policy-document file://loki-s3-policy.json
+
+
+Tempo IAM policy:
+=================
+
+cat > tempo-s3-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TempoBucketAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::${TEMPO_BUCKET}"
+    },
+    {
+      "Sid": "TempoObjectAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::${TEMPO_BUCKET}/*"
+    }
+  ]
+}
+EOF
+
+
+aws iam create-policy \
+  --policy-name TempoS3AccessPolicy \
+  --policy-document file://tempo-s3-policy.json
+
+
+Verify the policies:
+====================
+aws iam get-policy \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/ThanosS3AccessPolicy
+
+aws iam get-policy \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/LokiS3AccessPolicy
+
+aws iam get-policy \
+  --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/TempoS3AccessPolicy
+
+
+Create IAM service accounts in Monitoring EKS
+
+monitoring-eks
+     │
+     ├── thanos-s3
+     │
+     ├── loki-s3
+     │
+     └── tempo-s3
+
+
+Make sure you are in monitoring eks cluster
+kubectl config use-context monitoring-eks
+kubectl config current-context
+
+
+Create Thanos IAM service account:
+=================================
+
+eksctl create iamserviceaccount \
+  --cluster monitoring-eks \
+  --region ap-south-1 \
+  --namespace monitoring \
+  --name thanos-s3 \
+  --role-name ThanosS3Role \
+  --attach-policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/ThanosS3AccessPolicy \
+  --approve
+
+
+The above command automatically create monitoring namespace in monitoring cluster:
+
+Create Loki IAM service account:
+================================
+eksctl create iamserviceaccount \
+  --cluster monitoring-eks \
+  --region ap-south-1 \
+  --namespace monitoring \
+  --name loki-s3 \
+  --role-name LokiS3Role \
+  --attach-policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/LokiS3AccessPolicy \
+  --approve
+
+
+Create Tempo IAM service account:
+=================================
+eksctl create iamserviceaccount \
+  --cluster monitoring-eks \
+  --region ap-south-1 \
+  --namespace monitoring \
+  --name tempo-s3 \
+  --role-name TempoS3Role \
+  --attach-policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/TempoS3AccessPolicy \
+  --approve
+
+$ kubectl get serviceaccounts -n monitoring
+NAME        AGE
+default     2m28s
+loki-s3     54s
+tempo-s3    13s
+thanos-s3   2m28s
+
+
+Now verify the IAM annotations atelase for any one sarvice account:
+
+$ kubectl get sa thanos-s3 \
+  -n monitoring \
+  -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}{"\n"}'
+
+expected output:
+arn:aws:iam::045667250694:role/ThanosS3Role
+
+
+Final S3/IAM validation:
+
+$ aws s3api head-bucket --bucket "$THANOS_BUCKET"
+
+{
+    "BucketArn": "arn:aws:s3:::thanos-045667250694-ap-south-1",
+    "BucketRegion": "ap-south-1",
+    "AccessPointAlias": false
+}
+
+
+$ aws s3api head-bucket --bucket "$LOKI_BUCKET"
+
+{
+    "BucketArn": "arn:aws:s3:::loki-045667250694-ap-south-1",
+    "BucketRegion": "ap-south-1",
+    "AccessPointAlias": false
+}
+
+
+
+$ aws s3api head-bucket --bucket "$TEMPO_BUCKET"
+
+{
+    "BucketArn": "arn:aws:s3:::tempo-045667250694-ap-south-1",
+    "BucketRegion": "ap-south-1",
+    "AccessPointAlias": false
+}
+
+                    Monitoring EKS
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+        ▼                ▼                ▼
+   user/thanos-s3   user/loki-s3     user/tempo-s3
+        │                │                │
+        ▼                ▼                ▼
+   ThanosS3Role       LokiS3Role       TempoS3Role
+        │                │                │
+        ▼                ▼                ▼
+  Thanos Bucket      Loki Bucket      Tempo Bucket
+
+
+
+Phase 3 — Prometheus HA:
+=======================
+
+                    Monitoring EKS
+                         │
+                monitoring namespace
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+              ▼                     ▼
+        Prometheus-0           Prometheus-1
+              │                     │
+        50 GB gp3 PVC          50 GB gp3 PVC
+              │                     │
+              └──────────┬──────────┘
+                         │
+                    Thanos Sidecar
+                         │
+                         ▼
+                    Thanos Query
+                         │
+                         ▼
+                    Grafana
+
+
+Prometheus keeps local persistent storage.
+So if Thanos/S3 becomes temporarily unavailable:
+
+Prometheus can continue retaining local data
+Later, Thanos will upload blocks to S3 once connectivity is available.
+
+Application
+    │
+    ▼
+   Alloy
+    │
+    ▼
+Prometheus
+    │
+    ├── Local WAL/PVC
+    │
+    └── Thanos Sidecar ──X── S3 temporarily unavailable
+
+
+Make sure you are on Monitoring EKS:
+
+kubectl config use-context monitoring-eks
+
+Verify the EBS CSI driver:
+=========================
+kubectl get pods -n kube-system \
+  -l app.kubernetes.io/name=aws-ebs-csi-driver
+
+kubectl get storageclass
+
+the abhove command will show gp2 alone, but we need to create disk as gp3
+
+Create a dedicated gp3 StorageClass:
+===================================
+cat > monitoring-gp3-storageclass.yaml <<'EOF'
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: monitoring-gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  fsType: ext4
+EOF
+
+
+kubectl apply -f monitoring-gp3-storageclass.yaml
+
+$ kubectl get storageclass
+NAME             PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+gp2              kubernetes.io/aws-ebs   Delete          WaitForFirstConsumer   false                  169m
+monitoring-gp3   ebs.csi.aws.com         Delete          WaitForFirstConsumer   true                   19s
+
+
+Add the Prometheus Helm repository:
+==================================
+helm repo add prometheus-community \
+  https://prometheus-community.github.io/helm-charts
+
+
+$ helm repo update
+
+$ helm search repo prometheus-community/kube-prometheus-stack
+NAME                                            CHART VERSION   APP VERSION     DESCRIPTION
+prometheus-community/kube-prometheus-stack      89.2.2          v0.93.1         kube-prometheus-stack collects Kubernetes manif...
+
+
+
+Create Prometheus configuration:
+================================
+
+cat > prometheus-values.yaml <<'EOF'
+prometheus:
+  enabled: true
+
+  prometheusSpec:
+
+    replicas: 2
+
+    replicaExternalLabelName: prometheus_replica
+
+    externalLabels:
+      cluster: monitoring-eks
+      environment: demo
+
+    retention: 24h
+
+    retentionSize: "40GB"
+
+    walCompression: true
+
+    enableRemoteWriteReceiver: true
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: monitoring-gp3
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 50Gi
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+grafana:
+  enabled: false
+
+alertmanager:
+  enabled: false
+
+kube-state-metrics:
+  enabled: true
+
+prometheus-node-exporter:
+  enabled: true
+
+defaultRules:
+  create: true
+EOF
+
+
+
+Install kube-prometheus-stack:
+=============================
+
+helm upgrade --install kube-prometheus-stack \
+  prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --create-namespace \
+  --values prometheus-values.yaml
+
+Check Prometheus pods created or not:
+===================================
+$ kubectl get pods -n monitoring
+NAME                                                        READY   STATUS    RESTARTS   AGE
+kube-prometheus-stack-kube-state-metrics-85c5c86755-zb5x6   1/1     Running   0          89s
+kube-prometheus-stack-operator-577666cc6d-hsb2w             1/1     Running   0          89s
+kube-prometheus-stack-prometheus-node-exporter-gp869        1/1     Running   0          89s
+kube-prometheus-stack-prometheus-node-exporter-t8cm2        1/1     Running   0          89s
+prometheus-kube-prometheus-stack-prometheus-0               2/2     Running   0          84s
+prometheus-kube-prometheus-stack-prometheus-1               2/2     Running   0          83s
+
+Verify PVCs:
+===========
+$ kubectl get pvc -n monitoring
+NAME                                                                                           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS     VOLUMEATTRIBUTESCLASS   AGE
+prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-0   Bound    pvc-19e205a0-2e0f-46c9-aa05-1307062cc5b9   50Gi       RWO
+ monitoring-gp3   <unset>                 3m36s
+prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-1   Bound    pvc-2ff70c38-41ae-4abb-b72c-584d8890368d   50Gi       RWO
+ monitoring-gp3   <unset>                 3m36s
+
+
+Verify the Prometheus StatefulSet:
+=================================
+$ kubectl get statefulset -n monitoring
+NAME                                          READY   AGE
+prometheus-kube-prometheus-stack-prometheus   2/2     4m25s
+
+Verify Prometheus services:
+===========================
+$ kubectl get svc -n monitoring | grep prometheus
+kube-prometheus-stack-kube-state-metrics         ClusterIP   172.20.155.97    <none>        8080/TCP            6m9s
+kube-prometheus-stack-operator                   ClusterIP   172.20.163.239   <none>        443/TCP             6m9s
+kube-prometheus-stack-prometheus                 ClusterIP   172.20.246.103   <none>        9090/TCP,8080/TCP   6m9s
+kube-prometheus-stack-prometheus-node-exporter   ClusterIP   172.20.177.97    <none>        9100/TCP            6m9s
+prometheus-operated                              ClusterIP   None             <none>        9090/TCP            6m4s
+
+Prometheus will remain private inside the monitoring VPC.
+Later, if required for Alloy remote-write, we will create an internal NLB.
+
+Application VPC
+10.10.0.0/16
+      │
+      │ VPC Peering
+      │
+      ▼
+Monitoring VPC
+10.20.0.0/16
+      │
+      ▼
+Internal NLB
+      │
+      ▼
+Prometheus
+
+Verify Prometheus configuration:
+===============================
+$ kubectl get prometheus \
+  -n monitoring \
+  kube-prometheus-stack-prometheus \
+  -o yaml
+
+
+$ kubectl get prometheus \
+  -n monitoring \
+  kube-prometheus-stack-prometheus \
+  -o jsonpath='{.spec.externalLabels}'
+{"cluster":"monitoring-eks","environment":"demo"}
+
+
+Verify Prometheus is actually scraping metrics:
+==============================================
+$ kubectl port-forward \
+  -n monitoring \
+  svc/kube-prometheus-stack-prometheus \
+  9090:9090
+Forwarding from 127.0.0.1:9090 -> 9090
+
+From another Git Bash terminal or from your browser:
+
+$ curl "http://localhost:9090/-/ready"
+Prometheus Server is Ready.
+
+$ curl "http://localhost:9090/api/v1/query?query=up"
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"up","endpoint":"https-metrics","instance":"10.20.11.152:10250","job":"kubelet","metrics_p
+
+$ curl "http://localhost:9090/api/v1/targets"
+
+
+Verify remote-write receiver:
+============================
+
+$ kubectl get pod \
+  prometheus-kube-prometheus-stack-prometheus-0 \
+  -n monitoring \
+  -o jsonpath='{.spec.containers[0].args}'
+
+Look for:
+--web.enable-remote-write-receiver
+
+This is important because later:
+================================
+Application EKS
+      │
+     Alloy
+      │
+      │ Prometheus remote_write
+      ▼
+Monitoring EKS
+      │
+ Prometheus receiver
+
+
+
+at this phase:
+
+                 APPLICATION EKS
+                 10.10.0.0/16
+                       │
+                       │
+                    Alloy
+                       │
+                       │
+                 VPC PEERING
+                       │
+                       ▼
+                MONITORING EKS
+                10.20.0.0/16
+                       │
+              ┌────────┴────────┐
+              │                 │
+              ▼                 ▼
+        Prometheus-0       Prometheus-1
+              │                 │
+              ▼                 ▼
+           50Gi gp3          50Gi gp3
+              │                 │
+              └────────┬────────┘
+                       │
+                  HA Prometheus
+
+
+
+Thanos+S3:
+
+Verify thanos-s3 IAM ServiceAccount
+Create the Thanos S3 object-store configuration
+Attach Thanos sidecars to both Prometheus replicas
+Enable the Thanos discovery Service
+Verify both sidecars and S3 uploads
+Deploy Thanos Store Gateway + Compactor
+Deploy Thanos Query and verify the complete path
+
+
+make sure you are in monitoring EKS
+
+Verify the Thanos IAM ServiceAccount:
+we already created
+
+ServiceAccount:
+thanos-s3
+
+IAM Role:
+ThanosS3Role
+
+S3 bucket:
+thanos-045667250694-ap-south-1
+
+
+Verify:
+$ kubectl get serviceaccount thanos-s3 -n monitoring -o yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::045667250694:role/ThanosS3Role
+  creationTimestamp: "2026-09-05T13:55:35Z"
+  labels:
+    app.kubernetes.io/managed-by: eksctl
+  name: thanos-s3
+  namespace: monitoring
+  resourceVersion: "37118"
+  uid: 3c5b5375-f916-44c3-895c-a901eb29f9b8
+
+
+Create the Thanos S3 object-store configuration:
+===============================================
+export AWS_REGION=ap-south-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export THANOS_BUCKET="thanos-${AWS_ACCOUNT_ID}-${AWS_REGION}"
+
+echo "$THANOS_BUCKET"
+
+Expected:
+thanos-045667250694-ap-south-1
+
+Create thanos-objstore.yaml (This object store config we are going to use secret for thanos sidecare)
+==========================
+cat > thanos-objstore.yaml <<EOF
+type: S3
+config:
+  bucket: ${THANOS_BUCKET}
+  endpoint: s3.${AWS_REGION}.amazonaws.com
+  region: ${AWS_REGION}
+  aws_sdk_auth: true
+  insecure: false
+EOF
+
+$ cat thanos-objstore.yaml
+type: S3
+config:
+  bucket: thanos-045667250694-ap-south-1
+  endpoint: s3.ap-south-1.amazonaws.com
+  region: ap-south-1
+  aws_sdk_auth: true
+  insecure: false
+
+Create the Kubernetes Secret:
+=============================
+$ kubectl create secret generic thanos-objstore-config \
+  -n monitoring \
+  --from-file=objstore.yml=thanos-objstore.yaml \
+  --dry-run=client \
+  -o yaml | kubectl apply -f -
+
+kubectl get secret thanos-objstore-config -n monitoring
+
+$ kubectl get secret thanos-objstore-config \
+  -n monitoring \
+  -o jsonpath='{.data.objstore\.yml}' | base64 -d
+
+type: S3
+config:
+  bucket: thanos-045667250694-ap-south-1
+  endpoint: s3.ap-south-1.amazonaws.com
+  region: ap-south-1
+  aws_sdk_auth: true
+  insecure: false
+
+
+
+Configure Prometheus Thanos Sidecars:
+====================================
+Now we modify the existing kube-prometheus-stack installation
+
+Create prometheus-thanos-values.yaml
+
+cat > prometheus-thanos-values.yaml <<'EOF'
+prometheus:
+  enabled: true
+
+  prometheusSpec:
+
+    replicas: 2
+
+    replicaExternalLabelName: prometheus_replica
+
+    externalLabels:
+      cluster: monitoring-eks
+      environment: demo
+
+    retention: 24h
+
+    retentionSize: "40GB"
+
+    walCompression: true
+
+    enableRemoteWriteReceiver: true
+
+    serviceAccountName: thanos-s3
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: monitoring-gp3
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 50Gi
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+    thanos:
+      image: quay.io/thanos/thanos:v0.42.4
+      version: v0.42.4
+
+      objectStorageConfig:
+        existingSecret:
+          name: thanos-objstore-config
+          key: objstore.yml
+
+    thanosService:
+      enabled: true
+
+    thanosServiceMonitor:
+      enabled: true
+
+grafana:
+  enabled: false
+
+alertmanager:
+  enabled: false
+
+kube-state-metrics:
+  enabled: true
+
+prometheus-node-exporter:
+  enabled: true
+
+defaultRules:
+  create: true
+EOF
+
+
+Upgrade kube-prometheus-stack:
+=============================
+
+helm upgrade kube-prometheus-stack \
+  prometheus-community/kube-prometheus-stack \
+  --namespace monitoring \
+  --values prometheus-thanos-values.yaml
+
+Watch Prometheus pods restart or not:
+====================================
+$ kubectl get pods -n monitoring
+NAME                                                        READY   STATUS    RESTARTS   AGE
+kube-prometheus-stack-kube-state-metrics-85c5c86755-zb5x6   1/1     Running   0          48m
+kube-prometheus-stack-operator-577666cc6d-hsb2w             1/1     Running   0          48m
+kube-prometheus-stack-prometheus-node-exporter-gp869        1/1     Running   0          48m
+kube-prometheus-stack-prometheus-node-exporter-t8cm2        1/1     Running   0          48m
+prometheus-kube-prometheus-stack-prometheus-0               3/3     Running   0          23s
+prometheus-kube-prometheus-stack-prometheus-1               3/3     Running   0          40s
+
+Previously it was 2/2 but not its added one more sidecar container of thanos so it shows 3/3
+
+Verify the Thanos containers:
+============================
+$ kubectl get pods -n monitoring \
+  -l app.kubernetes.io/name=prometheus \
+  -o custom-columns=NAME:.metadata.name,CONTAINERS:.spec.containers[*].name
+
+NAME                                            CONTAINERS
+prometheus-kube-prometheus-stack-prometheus-0   prometheus,config-reloader,thanos-sidecar
+prometheus-kube-prometheus-stack-prometheus-1   prometheus,config-reloader,thanos-sidecar
+
+
+Verify Thanos sidecar logs:
+==========================
+kubectl logs \
+  prometheus-kube-prometheus-stack-prometheus-0 \
+  -n monitoring \
+  -c thanos-sidecar \
+  --tail=100
+
+kubectl logs \
+  prometheus-kube-prometheus-stack-prometheus-0 \
+  -n monitoring \
+  -c thanos-sidecar \
+  --tail=300 | grep -iE "error|access denied|upload|shipper|s3"
+
+deploy Thanos Store Gateway + Compactor + Query by installing Thanos
+====================================================================
+vi thanos-values.yaml
+
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: quay.io
+  repository: thanos/thanos
+  tag: v0.42.4
+  pullPolicy: IfNotPresent
+
+existingObjstoreSecret: thanos-objstore-config
+
+existingObjstoreSecretItems:
+  - key: objstore.yml
+    path: objstore.yml
+
+query:
+  enabled: true
+
+  replicaLabel:
+    - prometheus_replica
+
+  dnsDiscovery:
+    enabled: false
+
+  stores:
+    - kube-prometheus-stack-thanos-discovery.monitoring.svc.cluster.local:10901
+
+  service:
+    type: ClusterIP
+
+storegateway:
+  enabled: true
+
+  serviceAccount:
+    create: false
+    name: thanos-s3
+
+  persistence:
+    enabled: true
+    storageClass: monitoring-gp3
+    accessModes:
+      - ReadWriteOnce
+    size: 20Gi
+
+compactor:
+  enabled: true
+
+  serviceAccount:
+    create: false
+    name: thanos-s3
+
+  persistence:
+    enabled: true
+    storageClass: monitoring-gp3
+    accessModes:
+      - ReadWriteOnce
+    size: 20Gi
+
+bucketweb:
+  enabled: true
+
+  service:
+    type: ClusterIP
+
+Install Thanos:
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+
+helm upgrade --install thanos \
+  bitnami/thanos \
+  --namespace monitoring \
+  --values thanos-values.yaml
+
+
+Watch the Thanos pods:
+=====================
+
+$ kubectl get pods -n monitoring | grep -i thanos
+thanos-bucketweb-5976574fd6-js9pm                           1/1     Running   0          53s
+thanos-compactor-764fc96459-vb2bh                           1/1     Running   0          53s
+thanos-query-6646647664-wxzld                               1/1     Running   0          53s
+thanos-query-frontend-77f4bc4b57-6swck                      1/1     Running   0          53s
+thanos-storegateway-0                                       1/1     Running   0          53s
+
+Check VPC's:
+============
+$ kubectl get pvc -n monitoring
+NAME                                                                                           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS     VOLUMEATTRIBUTESCLASS   AGE
+data-thanos-storegateway-0                                                                     Bound    pvc-34c1c63c-dcb9-4420-b5ea-1d29ab0c2f48   20Gi       RWO
+ monitoring-gp3   <unset>                 2m5s
+prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-0   Bound    pvc-19e205a0-2e0f-46c9-aa05-1307062cc5b9   50Gi       RWO
+ monitoring-gp3   <unset>                 97m
+prometheus-kube-prometheus-stack-prometheus-db-prometheus-kube-prometheus-stack-prometheus-1   Bound    pvc-2ff70c38-41ae-4abb-b72c-584d8890368d   50Gi       RWO
+ monitoring-gp3   <unset>                 97m
+thanos-compactor                                                                               Bound    pvc-07de8ada-7503-49aa-88e9-5e67e2ccbe94   20Gi       RWO
+ monitoring-gp3   <unset>                 2m5s
+
+
+Check Thanos services:
+====================
+
+$ kubectl get svc -n monitoring | grep thanos
+thanos-bucketweb                                 ClusterIP   172.20.14.99     <none>        8080/TCP             3m6s
+thanos-compactor                                 ClusterIP   172.20.68.31     <none>        9090/TCP             3m6s
+thanos-query                                     ClusterIP   172.20.41.231    <none>        9090/TCP             3m6s
+thanos-query-frontend                            ClusterIP   172.20.207.28    <none>        9090/TCP             3m6s
+thanos-query-grpc                                ClusterIP   172.20.196.213   <none>        10901/TCP            3m6s
+thanos-storegateway                              ClusterIP   172.20.114.63    <none>        9090/TCP,10901/TCP   3m6s
+
+
+Check Query logs:
+==================
+
+$ kubectl logs \
+  deployment/thanos-query \
+  -n monitoring \
+  --tail=200
+
+$ kubectl logs \
+  deployment/thanos-query \
+  -n monitoring \
+  --tail=300 | grep -iE "error|warn|store|proxy|resolver"
+
+Check Store Gateway logs:
+========================
+kubectl logs \
+  statefulset/thanos-storegateway \
+  -n monitoring \
+  --tail=100
+
+Check Compactor logs:
+===================
+kubectl logs \
+  deployment/thanos-compactor \
+  -n monitoring \
+  --tail=100
+
