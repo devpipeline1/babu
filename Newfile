@@ -1787,4 +1787,1068 @@ grafana   LoadBalancer   172.20.72.150   k8s-monitori-grafana-f9ebf56a40-fa1fb5c
            S3            S3            S3
 
 
+Loki:
+====
+                    ┌──────────────────────┐
+                    │   APPLICATION EKS    │
+                    │                      │
+                    │  Online Boutique     │
+                    │       │              │
+                    │       │ logs         │
+                    └───────┼──────────────┘
+                            │
+                            │
+                     ┌──────▼──────┐
+                     │    Alloy    │
+                     └──────┬──────┘
+                            │
+                     Private VPC
+                     + VPC Peering
+                            │
+                            ▼
+                ┌───────────────────────┐
+                │    MONITORING EKS     │
+                │                       │
+                │   ┌───────────────┐   │
+                │   │     Loki      │   │
+                │   └───────┬───────┘   │
+                │           │           │
+                │           ▼           │
+                │       ┌───────┐       │
+                │       │  S3   │       │
+                │       └───────┘       │
+                │                       │
+                │   ┌───────────────┐   │
+                │   │    Grafana    │   │
+                │   └───────────────┘   │
+                └───────────────────────┘
 
+FYI.... we should use the existing monitoring S3 bucket and IAM role we already created specifically for
+
+Loki's storage model is TSDB + schema v13 + S3
+
+Bucket:
+loki-045667250694-ap-south-1
+
+ServiceAccount:
+loki-s3
+
+IAM Role:
+LokiS3Role
+
+Deploy Loki:
+===========
+$ aws s3api head-bucket \
+  --bucket "$LOKI_BUCKET" \
+  --region "$AWS_REGION"
+{
+    "BucketArn": "arn:aws:s3:::loki-045667250694-ap-south-1",
+    "BucketRegion": "ap-south-1",
+    "AccessPointAlias": false
+}
+
+
+$ aws s3api head-bucket \
+  --bucket "$LOKI_BUCKET" \
+  --region "$AWS_REGION"
+{
+    "BucketArn": "arn:aws:s3:::loki-045667250694-ap-south-1",
+    "BucketRegion": "ap-south-1",
+    "AccessPointAlias": false
+}
+
+
+
+$ kubectl get serviceaccount loki-s3 -n monitoring
+NAME      AGE
+loki-s3   3h24m
+
+
+$ kubectl get serviceaccount loki-s3 \
+  -n monitoring \
+  -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'
+echo
+
+arn:aws:iam::045667250694:role/LokiS3Role
+
+Add the current Loki Helm repository:
+=====================================
+
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
+helm repo update
+
+helm search repo grafana-community/loki
+
+Create Loki values for configuration:
+===================================
+vi loki-values.yaml
+
+deploymentMode: Monolithic
+
+loki:
+  auth_enabled: false
+
+  commonConfig:
+    replication_factor: 1
+
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+
+  storage:
+    type: s3
+
+    bucketNames:
+      chunks: loki-045667250694-ap-south-1
+      ruler: loki-045667250694-ap-south-1
+      admin: loki-045667250694-ap-south-1
+
+    s3:
+      region: ap-south-1
+      s3ForcePathStyle: false
+      insecure: false
+
+  storage_config:
+    aws:
+      region: ap-south-1
+      bucketnames: loki-045667250694-ap-south-1
+      s3forcepathstyle: false
+
+  limits_config:
+    allow_structured_metadata: true
+    volume_enabled: true
+    retention_period: 168h
+
+  pattern_ingester:
+    enabled: true
+
+  rulerConfig:
+    enable_api: true
+
+  compactor:
+    retention_enabled: true
+    delete_request_store: s3
+
+serviceAccount:
+  create: false
+  name: loki-s3
+
+minio:
+  enabled: false
+
+singleBinary:
+  replicas: 1
+
+  persistence:
+    enabled: true
+    storageClass: monitoring-gp3
+    accessModes:
+      - ReadWriteOnce
+    size: 20Gi
+
+gateway:
+  enabled: true
+  replicas: 1
+
+  service:
+    type: ClusterIP
+
+backend:
+  replicas: 0
+
+read:
+  replicas: 0
+
+write:
+  replicas: 0
+
+ingester:
+  replicas: 0
+
+querier:
+  replicas: 0
+
+queryFrontend:
+  replicas: 0
+
+queryScheduler:
+  replicas: 0
+
+distributor:
+  replicas: 0
+
+compactor:
+  replicas: 0
+
+indexGateway:
+  replicas: 0
+
+bloomPlanner:
+  replicas: 0
+
+bloomBuilder:
+  replicas: 0
+
+bloomGateway:
+  replicas: 0
+
+lokiCanary:
+  enabled: true
+
+
+===========================
+
+The important parts are:
+store: tsdb
+object_store: s3
+schema: v13
+
+serviceAccount:
+  create: false
+  name: loki-s3
+===========================
+
+Install Loki:
+============
+helm upgrade --install loki \
+  grafana-community/loki \
+  --namespace monitoring \
+  --values loki-values.yaml
+
+$ kubectl get pods -n monitoring | grep -i loki
+loki-0                                                      2/2     Running   0          89s
+loki-canary-7jddt                                           1/1     Running   0          10m
+loki-canary-kwlxk                                           1/1     Running   0          10m
+loki-chunks-cache-0                                         2/2     Running   0          10m
+loki-gateway-dc8996b89-2v2wv                                2/2     Running   0          10m
+loki-results-cache-0                                        2/2     Running   0          10m
+
+
+
+$ kubectl get pvc -n monitoring| grep -i loki
+storage-loki-0                                                                                 Bound    pvc-bbd21f11-aaa8-4ecb-9a4d-a71e4e555c2c   20Gi       RWO            monitoring-gp3   <unset>                 81s
+
+$ kubectl get svc -n monitoring | grep -i loki
+loki                                             ClusterIP      172.20.113.61    <none>                                                                          3100/TCP,9095/TCP,9096/TCP   10m
+loki-canary                                      ClusterIP      172.20.160.223   <none>                                                                          3500/TCP                     10m
+loki-chunks-cache                                ClusterIP      None             <none>                                                                          11211/TCP,9150/TCP           10m
+loki-gateway                                     ClusterIP      172.20.158.64    <none>                                                                          80/TCP                       10m
+loki-gateway-exporter                            ClusterIP      172.20.220.69    <none>                                                                          4040/TCP                     10m
+loki-headless                                    ClusterIP      None             <none>                                                                          3100/TCP,9095/TCP,9096/TCP   10m
+loki-memberlist                                  ClusterIP      None             <none>                                                                          7946/TCP                     10m
+loki-results-cache                               ClusterIP      None             <none>                                                                          11211/TCP,9150/TCP           10m
+
+Test Loki readiness:
+
+kubectl run loki-test \
+  -n monitoring \
+  --rm -it \
+  --restart=Never \
+  --image=curlimages/curl:8.10.1 \
+  -- \
+  curl -s http://loki-gateway.monitoring.svc.cluster.local/ready
+
+
+kubectl run loki-test \
+  -n monitoring \
+  --rm -it \
+  --restart=Never \
+  --image=curlimages/curl:8.10.1 \
+  -- \
+  curl -s http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/status/buildinfo
+
+Application EKS
+      │
+      │ container logs
+      ▼
+   Grafana Alloy
+      │
+      │ VPC Peering
+      ▼
+Monitoring EKS
+      │
+      ▼
+Loki Gateway
+      │
+      ▼
+    Loki 3.7.7
+      │
+      ▼
+      S3
+      │
+      └── loki-045667250694-ap-south-1
+
+Grafana
+   │
+   └──> Loki http://loki.monitoring.svc.cluster.local:3100
+
+
+
+Tempo:
+======
+already create bucket and service account and policies
+
+$ aws s3api head-bucket \
+  --bucket "$TEMPO_BUCKET" \
+  --region "$AWS_REGION"
+{
+    "BucketArn": "arn:aws:s3:::tempo-045667250694-ap-south-1",
+    "BucketRegion": "ap-south-1",
+    "AccessPointAlias": false
+}
+
+$ kubectl get sa tempo-s3 \
+  -n monitoring \
+  -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'
+echo
+arn:aws:iam::045667250694:role/TempoS3Role
+
+Install Tempo:
+===========
+
+helm repo add grafana-community https://grafana-community.github.io/helm-charts
+helm repo update
+
+helm search repo grafana-community/tempo
+
+vi tempo-values.yaml
+====================
+tempo:
+  reportingEnabled: false
+
+  metricsGenerator:
+    enabled: false
+
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo-045667250694-ap-south-1
+        endpoint: s3.ap-south-1.amazonaws.com
+        region: ap-south-1
+        insecure: false
+
+  retention: 168h
+
+serviceAccount:
+  create: false
+  name: tempo-s3
+
+persistence:
+  enabled: true
+  storageClassName: monitoring-gp3
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+
+tempoQuery:
+  enabled: false
+
+gateway:
+  enabled: false
+
+service:
+  type: ClusterIP
+
+traces:
+  otlp:
+    http:
+      enabled: true
+    grpc:
+      enabled: true
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+
+tempo-s3
+    ↓
+TempoS3Role
+    ↓
+S3 bucket
+
+
+
+
+helm upgrade --install tempo \
+  grafana-community/tempo \
+  --namespace monitoring \
+  --values tempo-values.yaml
+
+
+$ kubectl get pods -n monitoring  | grep tempo
+tempo-0                                                     1/1     Running   0          73
+
+$ kubectl get svc tempo -n monitoring
+NAME    TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                                                                                         AGE
+tempo   ClusterIP   172.20.160.175   <none>        6831/UDP,6832/UDP,3200/TCP,14268/TCP,14250/TCP,9411/TCP,55680/TCP,55681/TCP,4317/TCP,4318/TCP   11m
+
+$ kubectl get svc tempo -n monitoring -o yaml
+  - name: grpc-tempo-otlp
+    port: 4317
+    protocol: TCP
+    targetPort: 4317
+  - name: tempo-otlp-http
+    port: 4318
+    protocol: TCP
+    targetPort: 4318
+
+Grafana -->tempo-->http://tempo.monitoring.svc.cluster.local:3200
+
+
+Alloy configuration:
+====================
+
+we will configure 3 pipelines
+
+                    application-eks
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│  Online Boutique                                     │
+│       │                                              │
+│       ▼                                              │
+│  ┌─────────────────────┐                             │
+│  │    Grafana Alloy    │                             │
+│  │                     │                             │
+│  │  Metrics            │                             │
+│  │  Logs               │                             │
+│  │  Traces             │                             │
+│  └──────┬──────────────┘                             │
+│         │                                            │
+└─────────┼────────────────────────────────────────────┘
+          │
+          │ VPC Peering
+          │
+          ▼
+┌──────────────────────────────────────────────────────┐
+│                    monitoring-eks                    │
+│                                                      │
+│  Prometheus :9090  ◄── metrics                       │
+│       │                                              │
+│       ▼                                              │
+│    Thanos → S3                                       │
+│                                                      │
+│  Loki :3100       ◄── logs                          │
+│       │                                              │
+│       ▼                                              │
+│      S3                                              │
+│                                                      │
+│  Tempo :4317/4318 ◄── traces                        │
+│       │                                              │
+│       ▼                                              │
+│      S3                                              │
+└──────────────────────────────────────────────────────┘
+
+
+
+Important:
+=========
+Before installing Alloy, let's verify that the application VPC can reach the monitoring VPC services through the VPC peering connection.
+
+Prometheus
+http://prometheus-operated.monitoring.svc.cluster.local:9090
+
+Loki
+http://loki.monitoring.svc.cluster.local:3100
+
+Tempo
+http://tempo.monitoring.svc.cluster.local:4317
+http://tempo.monitoring.svc.cluster.local:4318
+
+However, there is an important Kubernetes networking point:
+
+*.svc.cluster.local DNS names from monitoring-eks are not directly resolvable from application-eks.
+
+Therefore, because Alloy runs in a different EKS cluster, we need private network endpoints, not Kubernetes ClusterIP DNS.
+
+We should expose the three ingestion services through internal AWS NLBs.
+
+make sure you are in monitoring eks cluster:
+kubectl config use-context monitoring-eks
+
+Create an internal NLB for Prometheus:
+=====================================
+
+cat > prometheus-internal-nlb.yaml <<'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-remote-write
+  namespace: monitoring
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: prometheus
+    prometheus: kube-prometheus-stack-prometheus
+  ports:
+    - name: remote-write
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+EOF
+
+kubectl apply -f prometheus-internal-nlb.yaml
+
+$ kubectl get svc prometheus-remote-write -n monitoring
+NAME                      TYPE           CLUSTER-IP      EXTERNAL-IP                                                                      PORT(S)          AGE
+prometheus-remote-write   LoadBalancer   172.20.71.241   k8s-monitori-promethe-e0617ba28f-d5c130e99c27d8ba.elb.ap-south-1.amazonaws.com   9090:31189/TCP   3m42s
+
+
+Create an internal NLB for Loki:
+===============================
+cat > loki-internal-nlb.yaml <<'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-ingest
+  namespace: monitoring
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: 3100
+      protocol: TCP
+EOF
+
+kubectl apply -f loki-internal-nlb.yaml
+
+$ kubectl get svc loki-ingest -n monitoring
+NAME          TYPE           CLUSTER-IP    EXTERNAL-IP                                                                      PORT(S)          AGE
+loki-ingest   LoadBalancer   172.20.70.9   k8s-monitori-lokiinge-a09257c812-8872d6d59604b187.elb.ap-south-1.amazonaws.com   3100:31464/TCP   2m39s
+
+
+Create an internal NLB for Tempo:
+================================
+cat > tempo-internal-nlb.yaml <<'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo-ingest
+  namespace: monitoring
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: tempo
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+EOF
+
+
+kubectl apply -f tempo-internal-nlb.yaml
+
+$ kubectl get svc tempo-ingest -n monitoring
+NAME           TYPE           CLUSTER-IP     EXTERNAL-IP                                                                      PORT(S)                         AGE
+tempo-ingest   LoadBalancer   172.20.37.14   k8s-monitori-tempoing-55de63d743-8734675630922384.elb.ap-south-1.amazonaws.com   4317:30966/TCP,4318:31467/TCP   8s
+
+
+Verify all 3 NLB are internel:
+=============================
+kubectl get svc prometheus-remote-write loki-ingest tempo-ingest \
+  -n monitoring \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" = "}{.metadata.annotations.service\.beta\.kubernetes\.io/aws-load-balancer-scheme}{"\n"}{end}'
+
+checl all 3 NLB address:
+=======================
+$ kubectl get svc \
+  prometheus-remote-write \
+  loki-ingest \
+  tempo-ingest \
+  -n monitoring \
+  -o custom-columns='NAME:.metadata.name,ADDRESS:.status.loadBalancer.ingress[0].hostname'
+NAME                      ADDRESS
+prometheus-remote-write   k8s-monitori-promethe-e0617ba28f-d5c130e99c27d8ba.elb.ap-south-1.amazonaws.com
+loki-ingest               k8s-monitori-lokiinge-a09257c812-8872d6d59604b187.elb.ap-south-1.amazonaws.com
+tempo-ingest              k8s-monitori-tempoing-55de63d743-8734675630922384.elb.ap-south-1.amazonaws.com
+
+
+Test connectivity from application-eks to monitoring eks network load balancer:
+===============================================================================
+
+switch to application eks cluster
+$ kubectl config use-context application-eks
+Switched to context "application-eks".
+
+$ kubectl run network-test \
+  --image=curlimages/curl:8.10.1 \
+  --restart=Never \
+  --rm -it \
+  -- sh
+and run below 3 command to check whethere we are able to reach from monitoring eks cluster
+
+curl -I http://k8s-monitori-promethe-e0617ba28f-d5c130e99c27d8ba.elb.ap-south-1.amazonaws.com:9090/-/ready
+curl -s http://k8s-monitori-lokiinge-a09257c812-8872d6d59604b187.elb.ap-south-1.amazonaws.com:3100/ready
+nc -vz -w 5 k8s-monitori-tempoing-55de63d743-8734675630922384.elb.ap-south-1.amazonaws.com 4317
+
+
+Application EKS
+     │
+     │ VPC Peering
+     ▼
+Monitoring EKS
+     │
+     ├── Prometheus NLB :9090  ✅
+     │
+     ├── Loki NLB :3100       ✅
+     │
+     └── Tempo NLB
+          ├── :4317 OTLP gRPC
+          └── :4318 OTLP HTTP
+Do not add port 3200 to the NLB. 3200 is useful for Tempo's HTTP/query API, but Alloy only needs 4317/4318 for trace ingestion.
+
+
+
+Grafana Alloy:
+==============
+
+                 APPLICATION EKS
+              ┌─────────────────────┐
+              │                     │
+              │  Application Pods   │
+              │       │             │
+              │       ▼             │
+              │      Alloy          │
+              │     / |  \          │
+              └────/──┼───\─────────┘
+                  /   │    \
+                 /    │     \
+                ▼     ▼      ▼
+          Prometheus  Loki   Tempo
+             :9090   :3100  :4317
+                │      │      │
+                ▼      ▼      ▼
+            Prometheus  S3    S3
+                │
+                ▼
+              Thanos
+                │
+                ▼
+                S3
+                │
+                ▼
+             Grafana
+
+switch to application eks cluster
+$ kubectl config use-context application-eks
+
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+
+search alloy in already installed grafana helm chart
+helm search repo grafana/alloy
+
+$ helm search repo grafana/alloy
+NAME                    CHART VERSION   APP VERSION     DESCRIPTION
+grafana/alloy           1.12.1          v1.19.2         Grafana Alloy
+grafana/alloy-crd       1.0.1           1.0.1           A Helm chart the Alloy CustomResourceDefinition...
+grafana/alloy-operator  0.7.1           1.12.1          Grafana Alloy Operator, providing innovative wa...
+
+
+Create alloy namespace:
+$ kubectl create namespace alloy
+namespace/alloy created
+
+Create the initial Alloy configuration:
+======================================
+
+vi alloy-values.yaml
+
+alloy:
+  configMap:
+    content: |
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      // ============================================================
+      // METRICS - Prometheus Remote Write
+      // ============================================================
+
+      prometheus.remote_write "monitoring" {
+        endpoint {
+          url = "http://k8s-monitori-promethe-e0617ba28f-d5c130e99c27d8ba.elb.ap-south-1.amazonaws.com:9090/api/v1/write"
+        }
+
+        external_labels = {
+          cluster     = "application-eks",
+          environment = "demo",
+        }
+      }
+
+      // ============================================================
+      // LOGS - Kubernetes Pods -> Loki
+      // ============================================================
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.kubernetes.pods.targets
+        forward_to = [loki.write.monitoring.receiver]
+      }
+
+      loki.write "monitoring" {
+        endpoint {
+          url = "http://k8s-monitori-lokiinge-a09257c812-8872d6d59604b187.elb.ap-south-1.amazonaws.com:3100/loki/api/v1/push"
+        }
+
+        external_labels = {
+          cluster     = "application-eks",
+          environment = "demo",
+        }
+      }
+
+      // ============================================================
+      // TRACES - OTLP Receiver
+      // ============================================================
+
+      otelcol.receiver.otlp "application" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+
+        output {
+          traces = [otelcol.processor.batch.application.input]
+        }
+      }
+
+      // ============================================================
+      // TRACES - Batch Processor
+      // ============================================================
+
+      otelcol.processor.batch "application" {
+        output {
+          traces = [otelcol.exporter.otlp.tempo.input]
+        }
+      }
+
+      // ============================================================
+      // TRACES - Tempo
+      // ============================================================
+
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "k8s-monitori-tempoing-55de63d743-8734675630922384.elb.ap-south-1.amazonaws.com:4317"
+
+          tls {
+            insecure = true
+          }
+        }
+      }
+
+  # ================================================================
+  # OTLP PORTS
+  # ================================================================
+
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+
+# ================================================================
+# ALLOY SERVICE
+# ================================================================
+
+service:
+  enabled: true
+  type: LoadBalancer
+
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+
+  internalTrafficPolicy: Cluster
+  externalTrafficPolicy: Cluster
+
+
+
+Install Alloy:
+=============
+helm upgrade --install alloy grafana/alloy \
+  -n alloy \
+  -f alloy-values.yaml
+
+
+$ kubectl get ds -n alloy
+NAME    DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+alloy   2         2         2       2            0           <none>          33s
+
+$ kubectl get pods -n alloy
+NAME          READY   STATUS    RESTARTS   AGE
+alloy-2t9gw   2/2     Running   0          36s
+alloy-q8vrc   2/2     Running   0          36s
+
+
+Check Alloy logs:
+================
+
+$ kubectl logs -n alloy -l app.kubernetes.io/name=alloy --tail=500 | grep -iE "otelcol|tempo|export|error|fail"
+ts=2026-09-05T18:49:41.397288475Z level=info msg="finished node evaluation" controller_path=/ controller_id="" trace_id=8036a4b8a262b61b67f22ee255aa3e0c node_id=otelcol.exporter.otlp.tempo duration=582.294µs
+ts=2026-09-05T18:49:41.397477406Z level=info msg="finished node evaluation" controller_path=/ controller_id="" trace_id=8036a4b8a262b61b67f22ee255aa3e0c node_id=otelcol.processor.batch.application duration=180.497µs
+
+trace id showing means its looks good
+
+Troubbleshooting: (you can use this for just tesing)
+================
+Generate traces in application cluster
+
+kubectl run telemetrygen \
+  -n default \
+  --restart=Never \
+  --image=ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+  -- \
+  traces \
+  --otlp-endpoint=k8s-monitori-tempoing-55de63d743-8734675630922384.elb.ap-south-1.amazonaws.com:4317 \
+  --otlp-insecure \
+  --traces=5
+
+
+kubectl get pod telemetrygen -n default
+kubectl logs telemetrygen -n default
+
+                APPLICATION EKS
+                       │
+                       │ OTLP :4317
+                       ▼
+        ┌──────────────────────────────┐
+        │      INTERNAL NLB            │
+        │      Alloy                   │
+        │                              │
+        │ :4317  OTLP gRPC             │
+        │ :4318  OTLP HTTP             │
+        └──────────────┬───────────────┘
+                       │
+                       ▼
+                ┌─────────────┐
+                │    ALLOY    │
+                │  DaemonSet  │
+                └──────┬──────┘
+                       │
+                       │ OTLP :4317
+                       ▼
+              ┌─────────────────┐
+              │      TEMPO      │
+              │ Internal NLB    │
+              │      :4317      │
+              └────────┬────────┘
+                       │
+                       ▼
+                 Tempo S3 Bucket
+
+
+we will create internal networl load balancer for alloy services
+
+
+$ kubectl get pods -n alloy
+NAME          READY   STATUS    RESTARTS   AGE
+alloy-ncqsb   2/2     Running   0          41s
+alloy-z4m8x   2/2     Running   0          63s
+
+Windows@DESKTOP-9HVNDLS MINGW64 /c/eksproject11
+$ kubectl get svc alloy -n alloy
+NAME    TYPE           CLUSTER-IP       EXTERNAL-IP                                                                PORT(S)                                         AGE
+alloy   LoadBalancer   172.20.129.131   k8s-alloy-alloy-d798aea506-2fe3c11a53220111.elb.ap-south-1.amazonaws.com   12345:31201/TCP,4317:32437/TCP,4318:31990/TCP   27m
+
+
+
+Alloy Pods
+├── alloy-ncqsb   2/2 Running
+└── alloy-z4m8x   2/2 Running
+
+Alloy Service
+└── Internal NLB
+    ├── :12345  → Alloy metrics/UI
+    ├── :4317   → OTLP gRPC
+    └── :4318   → OTLP HTTP
+
+test Application EKS → Alloy → Tempo
+
+First save NLB hostname:
+=======================
+$ export ALLOY_OTLP_NLB=$(kubectl get svc alloy -n alloy \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+echo $ALLOY_OTLP_NLB
+k8s-alloy-alloy-d798aea506-2fe3c11a53220111.elb.ap-south-1.amazonaws.com
+
+Make sure you are in application eks cluster
+$ kubectl config current-context
+application-eks
+
+
+
+Then run the trace generator:
+
+kubectl run telemetrygen \
+  -n default \
+  --rm -it \
+  --restart=Never \
+  --image=ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+  -- \
+  traces \
+  --otlp-endpoint=${ALLOY_OTLP_NLB}:4317 \
+  --otlp-insecure \
+  --traces=5
+
+
+Expected:
+
+traces generated {"worker": 0, "traces": 5}
+
+This test is :
+
+Application EKS
+      │
+      │ :4317
+      ▼
+Alloy Internal NLB
+      │
+      ▼
+Alloy OTLP Receiver
+      │
+      ▼
+Batch Processor
+      │
+      │ :4317
+      ▼
+Tempo
+
+check logs once:
+===============
+kubectl logs -n alloy daemonset/alloy --tail=300 | grep -iE "tempo|export|error|failed"
+kubectl logs -n alloy daemonset/alloy --tail=300 | grep -i "otelcol.exporter.otlp.tempo"
+
+
+switch to monitoring cluster:
+============================
+$ kubectl get pods -n monitoring -l app.kubernetes.io/name=tempo
+NAME      READY   STATUS    RESTARTS   AGE
+tempo-0   1/1     Running   0          86m
+
+
+$ kubectl logs -n monitoring sts/tempo --tail=300 | grep -iE "error|failed|s3|block|trace"
+level=info ts=2026-09-05T18:04:42.629489218Z caller=cache.go:55 msg="caches available to storage backend" parquet-footer=false bloom=false parquet-offset-idx=false parquet-column-idx=false trace-id-index=false parquet-page=false
+level=info ts=2026-09-05T18:04:42.682454332Z caller=cache.go:55 msg="caches 
+
+
+Check whether Tempo is writing to S3:
+
+$ aws s3 ls s3://$TEMPO_BUCKET/ --recursive --region $AWS_REGION | head -30
+2026-09-06 01:01:30     102424 single-tenant/d22aefcf-7e84-4f00-84da-2487f703b689/bloom-0
+2026-09-06 01:01:30      32641 single-tenant/d22aefcf-7e84-4f00-84da-2487f703b689/data.parquet
+2026-09-06 01:01:30         42 single-tenant/d22aefcf-7e84-4f00-84da-2487f703b689/index
+2026-09-06 01:01:30        449 single-tenant/d22aefcf-7e84-4f00-84da-2487f703b689/meta.json
+
+
+
+Add Tempo datasource to Grafana:
+Update your existing grafana-values.yaml.
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+
+      # ============================================================
+      # METRICS - Thanos
+      # ============================================================
+
+      - name: Thanos
+        type: prometheus
+        access: proxy
+        url: http://thanos-query.monitoring.svc.cluster.local:9090
+        isDefault: true
+        editable: true
+
+      # ============================================================
+      # LOGS - Loki
+      # ============================================================
+
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki.monitoring.svc.cluster.local:3100
+        editable: true
+
+      # ============================================================
+      # TRACES - Tempo
+      # ============================================================
+
+      - name: Tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.monitoring.svc.cluster.local:3200
+        editable: true
+
+
+
+helm upgrade grafana grafana/grafana \
+  -n monitoring \
+  -f grafana-values.yaml
+
+
+| Datasource | Endpoint                                                |
+| ---------- | ------------------------------------------------------- |
+| Loki       | `http://loki.monitoring.svc.cluster.local:3100`         |
+| Tempo      | `http://tempo.monitoring.svc.cluster.local:3200`        |
+| Thanos     | `http://thanos-query.monitoring.svc.cluster.local:9090` | 
+
+
+
+We have tested traces using telemetrygen, but we haven't yet deployed the Online Boutique application
+
+deploy the Google Online Boutique (microservices-demo) into application-eks, then validate all three signals in Grafana — Metrics, Logs, and Traces.
+
+Switch to Application EKS:
+
+$ kubectl config use-context application-eks
+Switched to context "application-eks".
+
+$ kubectl config current-context
+application-eks
