@@ -1,4 +1,65 @@
 
+| Component            | Location        | Purpose                         |
+| -------------------- | --------------- | ------------------------------- |
+| Online Boutique      | Application EKS | Demo application                |
+| Grafana Alloy        | Application EKS | Metrics/logs/traces collection  |
+| Prometheus-0         | Monitoring EKS  | Metrics storage                 |
+| Prometheus-1         | Monitoring EKS  | HA metrics storage              |
+| Thanos Sidecar       | Monitoring EKS  | Upload Prometheus blocks to S3  |
+| Thanos Store Gateway | Monitoring EKS  | Read historical metrics from S3 |
+| Thanos Compactor     | Monitoring EKS  | Compact S3 blocks               |
+| Thanos Query         | Monitoring EKS  | Unified PromQL endpoint         |
+| Loki                 | Monitoring EKS  | Logs                            |
+| Tempo                | Monitoring EKS  | Traces                          |
+| S3                   | AWS             | Long-term metrics/logs/traces   |
+| Grafana              | Monitoring EKS  | Visualization                   |
+
+
+                 AWS
+                  │
+       ┌──────────┴──────────┐
+       │                     │
+ Application VPC       Monitoring VPC
+  10.10.0.0/16          10.20.0.0/16
+       │                     │
+
+
+
+Application VPC                         Monitoring VPC
+10.10.0.0/16                            10.20.0.0/16
+
+Public subnet 1                         Public subnet 1
+10.10.1.0/24                            10.20.1.0/24
+Public subnet 2                         Public subnet 2
+10.10.2.0/24                            10.20.2.0/24
+
+Private subnet 1                        Private subnet 1
+10.10.11.0/24                           10.20.11.0/24
+Private subnet 2                        Private subnet 2
+10.10.12.0/24                           10.20.12.0/24
+
+       │                                      │
+       └──────────── VPC PEERING ─────────────┘
+
+
+
+                    AWS
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+     APP VPC                 MONITORING VPC
+     10.10.0.0/16            10.20.0.0/16
+          │                     │
+    application-eks        monitoring-eks
+          │                     │
+          │                     │
+     AWS LBC                AWS LBC
+          │                     │
+          └────── VPC PEERING ──┘
+                pcx-06f3d55a3c15322ff
+
+
+
 STEP 1  Network                         ✅ DONE
    |
 STEP 2  Application EKS                 ← NOW
@@ -7,7 +68,7 @@ STEP 3  Monitoring EKS
    |
 STEP 4  AWS Load Balancer Controller
    |
-STEP 5  S3 + IAM
+STEP 5  S3 + IAM for prometheus,thanos and tempo
    |
 STEP 6  Prometheus HA
    |
@@ -21,7 +82,7 @@ STEP 10 Alloy
    |
 STEP 11 Grafana
    |
-STEP 12 End-to-End Validation
+STEP 12 Application deployment and End-to-End Validation
 
 
 Step 2 — Create Application EKS
