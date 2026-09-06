@@ -3466,6 +3466,7 @@ sum by (namespace) (
 
 
 Now for traces:
+===============
 
 vi alloy-otlp-service.yaml
 
@@ -3605,6 +3606,7 @@ spec:
     env:
       - name: OTEL_EXPORTER_OTLP_ENDPOINT
         value: http://alloy-otlp.alloy.svc.cluster.local:4318
+
 
 $ kubectl apply -f instrumentation.yaml
 instrumentation.opentelemetry.io/online-boutique-instrumentation created
