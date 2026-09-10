@@ -2,51 +2,56 @@ Jump to application cluster:
 
  kubectl config use-context application-eks
 
+git clone https://github.com/devpipeline1/easytrade.git
+ls
+cd easytrade/
+unzip easytrade.zip
+ls
+cd easytrade/kubernetes-manifests
 
-helm install easytrade \
-  oci://europe-docker.pkg.dev/dynatrace-demoability/helm/easytrade \
-  --create-namespace \
-  --namespace easytrade
+kubectl apply -f release/ -n easytrade
 
 
-  $ kubectl get pods   -n easytrade
-NAME                                                   READY   STATUS    RESTARTS   AGE
-easytrade-accountservice-74ddd6c6d9-987fs              1/1     Running   0          2m9s
-easytrade-aggregator-service-58d5b9bb99-4dfgq          1/1     Running   0          2m9s
-easytrade-broker-service-87645dd6-gr8tm                1/1     Running   0          2m9s
-easytrade-calculationservice-79f56478b7-pg45d          1/1     Running   0          2m9s
-easytrade-contentcreator-7f46854986-p84vt              1/1     Running   0          2m9s
-easytrade-credit-card-order-service-7b7d48c584-892j9   1/1     Running   0          2m9s
-easytrade-db-0                                         1/1     Running   0          2m9s
-easytrade-engine-7f6bb75c57-zb48n                      1/1     Running   0          2m9s
-easytrade-feature-flag-service-56889cfdc-j74l4         1/1     Running   0          2m9s
-easytrade-frontend-d798f9457-7ckzn                     1/1     Running   0          2m9s
-easytrade-frontendreverseproxy-757c649679-qsb2w        1/1     Running   0          2m9s
-easytrade-loadgen-68d4fd75f9-dmbns                     1/1     Running   0          2m9s
-easytrade-loginservice-5d99df8865-qhkz2                1/1     Running   0          2m8s
-easytrade-manager-5d5f69f849-9ncvn                     1/1     Running   0          2m9s
-easytrade-offerservice-688fcd6f58-p9s6m                1/1     Running   0          2m8s
-easytrade-pricing-service-845d5bbfb5-pm4th             1/1     Running   0          2m8s
-easytrade-problem-operator-dcc884546-dxz2x             1/1     Running   0          2m8s
-easytrade-rabbitmq-7df8cdb7c6-4xqsv                    1/1     Running   0          2m9s
-easytrade-third-party-service-78486bd97f-bnqt6         1/1     Running   0          2m9s
 
-Windows@DESKTOP-9HVNDLS MINGW64 /c/mymimirproject
-$ kubectl get svc  -n easytrade
-NAME                                  TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)              AGE
-easytrade-accountservice              ClusterIP   172.20.90.131    <none>        8080/TCP             2m19s
-easytrade-broker-service              ClusterIP   172.20.30.16     <none>        8080/TCP             2m19s
-easytrade-credit-card-order-service   ClusterIP   172.20.176.79    <none>        8080/TCP             2m19s
-easytrade-db                          ClusterIP   172.20.235.237   <none>        1433/TCP             2m19s
-easytrade-engine                      ClusterIP   172.20.83.241    <none>        8080/TCP             2m19s
-easytrade-feature-flag-service        ClusterIP   172.20.13.72     <none>        8080/TCP             2m19s
-easytrade-frontend                    ClusterIP   172.20.162.99    <none>        3000/TCP             2m19s
-easytrade-frontendreverseproxy        ClusterIP   172.20.62.84     <none>        8080/TCP             2m19s
-easytrade-loginservice                ClusterIP   172.20.228.219   <none>        8080/TCP             2m19s
-easytrade-manager                     ClusterIP   172.20.162.228   <none>        8080/TCP             2m19s
-easytrade-offerservice                ClusterIP   172.20.207.85    <none>        8080/TCP             2m19s
-easytrade-pricing-service             ClusterIP   172.20.30.93     <none>        8080/TCP             2m19s
-easytrade-rabbitmq                    ClusterIP   172.20.222.33    <none>        5672/TCP,15672/TCP   2m19s
-easytrade-third-party-service         ClusterIP   172.20.117.168   <none>        8080/TCP             2m19s
+
+$  kubectl get pods   -n easytrade
+NAME                                         READY   STATUS    RESTARTS        AGE
+accountservice-fc885b9b4-wcgx5               1/1     Running   0               7m59s
+aggregator-service-5bfdfc8ffd-npbpr          1/1     Running   0               7m58s
+broker-service-79c79ddd9b-zrrzm              1/1     Running   0               7m58s
+calculationservice-bd55b7dbb-r827s           1/1     Running   0               7m58s
+contentcreator-7c8fb4d5dc-gjdth              1/1     Running   4 (6m12s ago)   7m58s
+credit-card-order-service-59c54ccd4d-kz8rm   1/1     Running   0               7m58s
+db-6bd8df755-xd522                           1/1     Running   0               7m58s
+engine-697bbb9846-9wx8r                      1/1     Running   0               7m57s
+feature-flag-service-5b7f68cc66-lpsw5        1/1     Running   0               7m57s
+frontend-55fbf67b7b-rg48s                    1/1     Running   0               7m57s
+frontendreverseproxy-5f496b5469-mqv7k        1/1     Running   0               7m57s
+loadgen-7b96587546-bkk9b                     1/1     Running   0               7m57s
+loginservice-775c9bbb47-7stdn                1/1     Running   0               7m56s
+manager-8b78b7877-229jv                      1/1     Running   0               7m56s
+offerservice-786c4bf9d6-qv2tx                1/1     Running   0               7m56s
+pricing-service-86548f9b7-tvllp              1/1     Running   1 (6m12s ago)   7m56s
+problem-operator-58bddd9c8-p4c52             1/1     Running   0               7m55s
+rabbitmq-bc877c888-z7q89                     1/1     Running   0               7m55s
+third-party-service-5c6c94865-xvrkn          1/1     Running   0               7m55s
+
+
+$ kubectl get svc -n easytrade
+NAME                             TYPE           CLUSTER-IP       EXTERNAL-IP                                                                      PORT(S)              AGE
+accountservice                   ClusterIP      172.20.221.119   <none>                                                                           8080/TCP             92s
+broker-service                   ClusterIP      172.20.53.175    <none>                                                                           8080/TCP             91s
+credit-card-order-service        ClusterIP      172.20.66.195    <none>                                                                           8080/TCP             91s
+db                               ClusterIP      172.20.214.117   <none>                                                                           1433/TCP             91s
+engine                           ClusterIP      172.20.68.108    <none>                                                                           8080/TCP             90s
+feature-flag-service             ClusterIP      172.20.209.87    <none>                                                                           8080/TCP             90s
+frontend                         ClusterIP      172.20.167.55    <none>                                                                           3000/TCP             90s
+frontendreverseproxy-easytrade   LoadBalancer   172.20.101.132   k8s-easytrad-frontend-8866dbdbc3-bbdd7f915251d421.elb.ap-south-1.amazonaws.com   80:32218/TCP         90s
+loginservice                     ClusterIP      172.20.175.48    <none>                                                                           8080/TCP             89s
+manager                          ClusterIP      172.20.241.11    <none>                                                                           8080/TCP             89s
+offerservice                     ClusterIP      172.20.188.13    <none>                                                                           8080/TCP             89s
+pricing-service                  ClusterIP      172.20.176.41    <none>                                                                           8080/TCP             89s
+rabbitmq                         ClusterIP      172.20.2.104     <none>                                                                           5672/TCP,15672/TCP   88s
+third-party-service              ClusterIP      172.20.163.148   <none>                                                                           8080/TCP             88s
 
 
