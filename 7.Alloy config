@@ -848,20 +848,6 @@ count(kube_node_info)
 
 
 
-kubectl patch svc easytrade-frontend \
-  -n easytrade \
-  -p '{
-    "metadata": {
-      "annotations": {
-        "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing",
-        "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip"
-      }
-    },
-    "spec": {
-      "type": "LoadBalancer"
-    }
-  }'
-
 kubectl patch svc easytrade-frontendreverseproxy   -n easytrade   -p '{
     "metadata": {
       "annotations": {
@@ -873,14 +859,5 @@ kubectl patch svc easytrade-frontendreverseproxy   -n easytrade   -p '{
       "type": "LoadBalancer"
     }
   }'
-
-
-Now we will scrap application pod metrics:
-=========================================
-i am selecting 2 services for monitoring
-
-$  kubectl get svc -n easytrade| egrep -w 'easytrade-frontend|easytrade-engine'     
-easytrade-engine                      ClusterIP   172.20.83.241    <none>        8080/TCP             3h43m
-easytrade-frontend                    ClusterIP   172.20.162.99    <none>        3000/TCP             3h43m
 
 
