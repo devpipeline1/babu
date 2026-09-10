@@ -848,7 +848,7 @@ count(kube_node_info)
 
 
 
-kubectl patch svc easytrade-frontend \
+kubectl patch svc frontend \
   -n easytrade \
   -p '{
     "metadata": {
