@@ -1,5 +1,5 @@
-First verify network connectivity to Mimir:
-==========================================
+First verify network connectivity to Mimir from application cluster:
+==================================================================
 
 $ kubectl run network-test \
   --image=curlimages/curl \
@@ -296,7 +296,6 @@ Install ALloy:
 helm upgrade --install alloy \
   grafana/alloy \
   --namespace alloy \
-  --create-namespace \
   --values alloy-values.yaml
 
 Verify:
@@ -378,65 +377,6 @@ curl -s http://localhost:12345/metrics | \
 grep -i remote_write
 
 
-Check which EasyTrade pods have Prometheus annotations:
-======================================================
-
-kubectl get pods \
-  -n easytrade \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.prometheus\.io/scrape}{"\t"}{.metadata.annotations.prometheus\.io/port}{"\n"}{end}'
-
-
-  output:
-  ======
-  easytrade-accountservice-74ddd6c6d9-987fs
-easytrade-aggregator-service-58d5b9bb99-4dfgq
-easytrade-broker-service-87645dd6-gr8tm
-easytrade-calculationservice-79f56478b7-pg45d
-easytrade-contentcreator-7f46854986-p84vt
-easytrade-credit-card-order-service-7b7d48c584-892j9
-easytrade-db-0
-easytrade-engine-7f6bb75c57-zb48n
-easytrade-feature-flag-service-56889cfdc-j74l4
-easytrade-frontend-d798f9457-7ckzn
-easytrade-frontendreverseproxy-757c649679-qsb2w
-easytrade-loadgen-68d4fd75f9-dmbns
-easytrade-loginservice-5d99df8865-qhkz2
-easytrade-manager-5d5f69f849-9ncvn
-easytrade-offerservice-688fcd6f58-p9s6m
-easytrade-pricing-service-845d5bbfb5-pm4th
-easytrade-problem-operator-dcc884546-dxz2x
-easytrade-rabbitmq-7df8cdb7c6-4xqsv
-easytrade-third-party-service-78486bd97f-bnqt6
-
-
-kubectl get pods -n easytrade \
-  -o custom-columns=\
-NAME:.metadata.name,\
-SCRAPE:.metadata.annotations.prometheus\\.io/scrape,\
-PORT:.metadata.annotations.prometheus\\.io/port,\
-PATH:.metadata.annotations.prometheus\\.io/path
-
-
-NAME                                                   SCRAPE   PORT     PATH
-easytrade-accountservice-74ddd6c6d9-987fs              <none>   <none>   <none>
-easytrade-aggregator-service-58d5b9bb99-4dfgq          <none>   <none>   <none>
-easytrade-broker-service-87645dd6-gr8tm                <none>   <none>   <none>
-easytrade-calculationservice-79f56478b7-pg45d          <none>   <none>   <none>
-easytrade-contentcreator-7f46854986-p84vt              <none>   <none>   <none>
-easytrade-credit-card-order-service-7b7d48c584-892j9   <none>   <none>   <none>
-easytrade-db-0                                         <none>   <none>   <none>
-easytrade-engine-7f6bb75c57-zb48n                      <none>   <none>   <none>
-easytrade-feature-flag-service-56889cfdc-j74l4         <none>   <none>   <none>
-easytrade-frontend-d798f9457-7ckzn                     <none>   <none>   <none>
-easytrade-frontendreverseproxy-757c649679-qsb2w        <none>   <none>   <none>
-easytrade-loadgen-68d4fd75f9-dmbns                     <none>   <none>   <none>
-easytrade-loginservice-5d99df8865-qhkz2                <none>   <none>   <none>
-easytrade-manager-5d5f69f849-9ncvn                     <none>   <none>   <none>
-easytrade-offerservice-688fcd6f58-p9s6m                <none>   <none>   <none>
-easytrade-pricing-service-845d5bbfb5-pm4th             <none>   <none>   <none>
-easytrade-problem-operator-dcc884546-dxz2x             <none>   <none>   <none>
-easytrade-rabbitmq-7df8cdb7c6-4xqsv                    <none>   <none>   <none>
-easytrade-third-party-service-78486bd97f-bnqt6         <none>   <none>   <none>
 
 so far, we capture
 Phase 1 — Infrastructure Metrics
