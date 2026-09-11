@@ -129,6 +129,17 @@ Flask==3.1.0
 prometheus-client==0.21.1
 gunicorn==23.0.0
 
+Create Dockerfile
+================
+vi Dockerfile
+
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py .
+EXPOSE 8080
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "app:app"]
 
 
 docker build -t devpipeline/easytrade:demo .
@@ -141,7 +152,9 @@ docker push devpipeline/easytrade:demo
 
 Test the image:
 ==============
-docker push devpipeline/easytrade:demo
+docker run \
+  -p 8080:8080 \
+  devpipeline/easytrade:demo
 
 open another session and run: 
 [root@ip-172-31-1-136 ~]# curl http://localhost:8080/health
@@ -223,9 +236,6 @@ spec:
   type: ClusterIP
 
 
-===============================
-Note: YOUR_DOCKERHUB_USERNAME
-=============================
 
 Deploy it on application kubernetes cluster
 kubectl apply -f easytrade-demo.yaml
@@ -621,18 +631,207 @@ alloy:
             "job"         = "kube-state-metrics",
           },
         ]
+
+
         forward_to = [
           prometheus.remote_write.mimir.receiver,
         ]
+
+
         scrape_interval = "30s"
+
+
         scrape_timeout = "10s"
+
       }
+
+
+      // =====================================================
+      // EASYTRADE APPLICATION POD DISCOVERY
+      // =====================================================
+
+      discovery.kubernetes "easytrade_pods" {
+
+        role = "pod"
+
+        namespaces {
+          names = ["easytrade"]
+        }
+
+      }
+
+
+      // =====================================================
+      // FILTER ONLY EASYTRADE DEMO SERVICE
+      // =====================================================
+
+      discovery.relabel "easytrade_demo_service" {
+
+        targets = discovery.kubernetes.easytrade_pods.targets
+
+
+        // ---------------------------------------------------
+        // Keep only easytrade-demo-service pods
+        // ---------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_pod_label_app",
+          ]
+
+          regex = "easytrade-demo-service"
+
+          action = "keep"
+
+        }
+
+
+        // ---------------------------------------------------
+        // Keep only container port 8080
+        // ---------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_pod_container_port_number",
+          ]
+
+          regex = "8080"
+
+          action = "keep"
+
+        }
+
+
+        // ---------------------------------------------------
+        // Set target address
+        // PodIP:8080
+        // ---------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_pod_ip",
+            "__meta_kubernetes_pod_container_port_number",
+          ]
+
+          separator = ":"
+
+          regex = "(.+):(.+)"
+
+          target_label = "__address__"
+
+          replacement = "$1:$2"
+
+        }
+
+
+        // ---------------------------------------------------
+        // Cluster label
+        // ---------------------------------------------------
+
+        rule {
+
+          target_label = "cluster"
+
+          replacement = "application-eks"
+
+        }
+
+
+        // ---------------------------------------------------
+        // Namespace label
+        // ---------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_namespace",
+          ]
+
+          target_label = "namespace"
+
+        }
+
+
+        // ---------------------------------------------------
+        // Pod label
+        // ---------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_pod_name",
+          ]
+
+          target_label = "pod"
+
+        }
+
+
+        // ---------------------------------------------------
+        // Service label
+        // ---------------------------------------------------
+
+        rule {
+
+          target_label = "service"
+
+          replacement = "easytrade-demo-service"
+
+        }
+
+
+        // ---------------------------------------------------
+        // Job label
+        // ---------------------------------------------------
+
+        rule {
+
+          target_label = "job"
+
+          replacement = "easytrade-demo-service"
+
+        }
+
+      }
+
+
+      // =====================================================
+      // SCRAPE EASYTRADE APPLICATION METRICS
+      // =====================================================
+
+      prometheus.scrape "easytrade_demo_service" {
+
+        targets =
+          discovery.relabel.easytrade_demo_service.output
+
+
+        forward_to = [
+          prometheus.remote_write.mimir.receiver,
+        ]
+
+
+        scrape_interval = "15s"
+
+
+        scrape_timeout = "10s"
+
+
+        metrics_path = "/metrics"
+
+      }
+
+
 controller:
   type: deployment
+
   replicas: 1
+
+
 rbac:
   create: true
-
 
 
 Lables are important we are controlling metric collection with lables
@@ -643,11 +842,12 @@ Lables are important we are controlling metric collection with lables
   grep easytrade-demo-service
 easytrade-demo-service-5f5bc6dfd6-wbr2g                1/1     Running   0          20m    app=easytrade-demo-service,pod-template-hash=5f5bc6dfd6,topology.kubernetes.io/region=ap-south-1,topology.kubernetes.io/zone=ap-south-1b
 
-Windows@DESKTOP-9HVNDLS MINGW64 /c/mymimirproject
+
 $ kubectl get deployment \
   easytrade-demo-service \
   -n easytrade \
   -o jsonpath='{.spec.template.metadata.labels}'
+
 {"app":"easytrade-demo-service"}
 
 
