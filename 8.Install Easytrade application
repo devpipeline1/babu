@@ -1,8 +1,14 @@
 Jump to application cluster:
+kubectl config use-context application-eks
 
- kubectl config use-context application-eks
 
-helm install easytrade oci://europe-docker.pkg.dev/dynatrace-demoability/helm/easytrade --create-namespace --namespace easytrade
+Create easytrade nmapespace
+===========================
+kubectl create ns easytrade
+
+Deploy application:
+==================
+helm install easytrade oci://europe-docker.pkg.dev/dynatrace-demoability/helm/easytrade --namespace easytrade
 
 $  kubectl get pods -n easytrade
 NAME                                                   READY   STATUS    RESTARTS   AGE
