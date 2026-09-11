@@ -44,4 +44,14 @@ easytrade-pricing-service             ClusterIP   172.20.126.175   <none>       
 easytrade-rabbitmq                    ClusterIP   172.20.25.200    <none>        5672/TCP,15672/TCP   2m53s
 easytrade-third-party-service         ClusterIP   172.20.4.49      <none>        8080/TCP             2m53s
 
-
+kubectl patch svc easytrade-frontendreverseproxy   -n easytrade   -p '{
+    "metadata": {
+      "annotations": {
+        "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing",
+        "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip"
+      }
+    },
+    "spec": {
+      "type": "LoadBalancer"
+    }
+  }'
