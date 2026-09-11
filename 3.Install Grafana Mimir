@@ -306,7 +306,7 @@ mimir:
       backend: s3
       storage_prefix: blocks
       s3:
-        bucket_name: mimir-metrics-045667250694-ap-south-1
+        bucket_name: mimir-045667250694-ap-south-1
         region: ap-south-1
         endpoint: s3.ap-south-1.amazonaws.com
 # ============================================================
@@ -410,7 +410,6 @@ helm repo update
 helm upgrade --install mimir \
   grafana/mimir-distributed \
   --namespace monitoring \
-  --kube-context monitoring-eks \
   --values mimir-values.yaml
 
 
