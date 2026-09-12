@@ -1,0 +1,361 @@
+1. Application Up Status
+up{
+  job="easytrade-demo-service"
+}
+
+Visualization:
+
+Stat
+
+Expected:
+
+1 = UP 🟢
+0 = DOWN 🔴
+2. Application Target Count
+count(
+  up{
+    job="easytrade-demo-service"
+  }
+)
+
+Shows how many application pods Alloy is scraping.
+
+Visualization:
+
+Stat
+3. Request Rate
+
+If your application exposes:
+
+http_requests_total
+
+Use:
+
+sum(
+  rate(http_requests_total{
+    job="easytrade-demo-service"
+  }[5m])
+)
+
+Visualization:
+
+Time series
+4. Requests Per Second by Pod
+sum by (pod) (
+  rate(http_requests_total{
+    job="easytrade-demo-service"
+  }[5m])
+)
+
+Useful for checking traffic distribution.
+
+5. HTTP Error Rate
+
+If your application has HTTP status labels:
+
+sum(
+  rate(http_requests_total{
+    job="easytrade-demo-service",
+    status=~"5.."
+  }[5m])
+)
+6. HTTP Success Rate
+sum(
+  rate(http_requests_total{
+    job="easytrade-demo-service",
+    status=~"2.."
+  }[5m])
+)
+7. Application Metrics Availability
+count by (__name__) (
+  {job="easytrade-demo-service"}
+)
+
+This is useful initially to understand exactly what metrics your application exposes.
+
+2️⃣ Kubernetes Cluster Dashboard
+
+This will be one of the most important dashboards for your observability demo.
+
+Your cluster label is:
+
+cluster="application-eks"
+🖥️ NODE METRICS
+1. Number of Nodes
+count(
+  kube_node_info{
+    cluster="application-eks"
+  }
+)
+
+Visualization:
+
+Stat
+2. Nodes Ready
+sum(
+  kube_node_status_condition{
+    cluster="application-eks",
+    condition="Ready",
+    status="true"
+  }
+)
+3. Node CPU Usage
+100 -
+(
+  avg by (node) (
+    rate(
+      node_cpu_seconds_total{
+        cluster="application-eks",
+        mode="idle"
+      }[5m]
+    )
+  ) * 100
+)
+
+⚠️ In your current Alloy config, you're scraping kubelet and cAdvisor, but not node-exporter directly. So node_cpu_seconds_total may not exist.
+
+For your current setup, use cAdvisor:
+
+sum by (node) (
+  rate(
+    container_cpu_usage_seconds_total{
+      cluster="application-eks",
+      container!="",
+      image!=""
+    }[5m]
+  )
+)
+4. Node Memory Usage
+sum by (node) (
+  container_memory_working_set_bytes{
+    cluster="application-eks",
+    container!="",
+    image!=""
+  }
+)
+
+Visualization:
+
+Time series
+📦 POD METRICS
+5. Total Pods
+count(
+  kube_pod_info{
+    cluster="application-eks"
+  }
+)
+6. Running Pods
+count(
+  kube_pod_status_phase{
+    cluster="application-eks",
+    phase="Running"
+  } == 1
+)
+7. Pending Pods
+count(
+  kube_pod_status_phase{
+    cluster="application-eks",
+    phase="Pending"
+  } == 1
+)
+8. Failed Pods
+count(
+  kube_pod_status_phase{
+    cluster="application-eks",
+    phase="Failed"
+  } == 1
+)
+9. Pod CPU Usage
+sum by (namespace, pod) (
+  rate(
+    container_cpu_usage_seconds_total{
+      cluster="application-eks",
+      container!="",
+      image!=""
+    }[5m]
+  )
+)
+10. Top 10 Pods by CPU
+topk(
+  10,
+  sum by (namespace, pod) (
+    rate(
+      container_cpu_usage_seconds_total{
+        cluster="application-eks",
+        container!="",
+        image!=""
+      }[5m]
+    )
+  )
+)
+
+Very good for a Grafana demo.
+
+11. Pod Memory Usage
+sum by (namespace, pod) (
+  container_memory_working_set_bytes{
+    cluster="application-eks",
+    container!="",
+    image!=""
+  }
+)
+12. Top 10 Pods by Memory
+topk(
+  10,
+  sum by (namespace, pod) (
+    container_memory_working_set_bytes{
+      cluster="application-eks",
+      container!="",
+      image!=""
+    }
+  )
+)
+🔄 CONTAINER METRICS
+13. Container Restarts
+sum by (namespace, pod, container) (
+  kube_pod_container_status_restarts_total{
+    cluster="application-eks"
+  }
+)
+14. Top Containers by CPU
+topk(
+  10,
+  sum by (namespace, pod, container) (
+    rate(
+      container_cpu_usage_seconds_total{
+        cluster="application-eks",
+        container!="",
+        image!=""
+      }[5m]
+    )
+  )
+)
+15. Top Containers by Memory
+topk(
+  10,
+  sum by (namespace, pod, container) (
+    container_memory_working_set_bytes{
+      cluster="application-eks",
+      container!="",
+      image!=""
+    }
+  )
+)
+🚀 DEPLOYMENT METRICS
+
+These are very useful for your EasyTrade application.
+
+16. Desired Replicas
+kube_deployment_spec_replicas{
+  cluster="application-eks",
+  namespace="easytrade"
+}
+17. Available Replicas
+kube_deployment_status_replicas_available{
+  cluster="application-eks",
+  namespace="easytrade"
+}
+18. Replica Difference
+
+This helps detect deployment problems:
+
+kube_deployment_spec_replicas{
+  cluster="application-eks",
+  namespace="easytrade"
+}
+-
+kube_deployment_status_replicas_available{
+  cluster="application-eks",
+  namespace="easytrade"
+}
+
+Expected:
+
+0 = Healthy 🟢
+
+>0 = Problem 🔴
+🌐 NAMESPACE METRICS
+19. Pods Per Namespace
+count by (namespace) (
+  kube_pod_info{
+    cluster="application-eks"
+  }
+)
+20. CPU Usage Per Namespace
+sum by (namespace) (
+  rate(
+    container_cpu_usage_seconds_total{
+      cluster="application-eks",
+      container!="",
+      image!=""
+    }[5m]
+  )
+)
+21. Memory Usage Per Namespace
+sum by (namespace) (
+  container_memory_working_set_bytes{
+    cluster="application-eks",
+    container!="",
+    image!=""
+  }
+)
+3️⃣ EASYTRADE-SPECIFIC KUBERNETES DASHBOARD
+
+I recommend creating another dashboard specifically for:
+
+Namespace = easytrade
+Dashboard Variables
+
+Create variables:
+
+Cluster
+label_values(kube_pod_info, cluster)
+Namespace
+label_values(kube_pod_info{cluster="$cluster"}, namespace)
+
+Default:
+
+easytrade
+Pod
+label_values(
+  kube_pod_info{
+    cluster="$cluster",
+    namespace="$namespace"
+  },
+  pod
+)
+Recommended EasyTrade Panels
+Application Pods
+count(
+  kube_pod_info{
+    cluster="$cluster",
+    namespace="$namespace"
+  }
+)
+Application CPU
+sum(
+  rate(
+    container_cpu_usage_seconds_total{
+      cluster="$cluster",
+      namespace="$namespace",
+      container!="",
+      image!=""
+    }[5m]
+  )
+)
+Application Memory
+sum(
+  container_memory_working_set_bytes{
+    cluster="$cluster",
+    namespace="$namespace",
+    container!="",
+    image!=""
+  }
+)
+Application Restarts
+sum(
+  kube_pod_container_status_restarts_total{
+    cluster="$cluster",
+    namespace="$namespace"
+  }
+)
