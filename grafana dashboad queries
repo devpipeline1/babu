@@ -14,13 +14,7 @@ First: Find available EasyTrade metrics
 
 In Grafana → Explore → Mimir datasource, run:
 
-{job="easytrade-demo-service"}
 
-Or to see metric names:
-
-count by (__name__) (
-  {job="easytrade-demo-service"}
-)
 
 This will show the actual metrics exposed by your application.
 
@@ -38,6 +32,17 @@ Expected:
 
 1 = UP 🟢
 0 = DOWN 🔴
+
+
+{job="easytrade-demo-service"}
+
+Or to see metric names:
+
+count by (__name__) (
+  {job="easytrade-demo-service"}
+)
+
+
 2. Application Target Count
 count(
   up{
