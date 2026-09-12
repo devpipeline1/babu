@@ -1,3 +1,30 @@
+1️⃣ EasyTrade Application Dashboard
+
+Your application metrics are scraped from:
+
+easytrade-demo-service
+
+With labels like:
+
+cluster="application-eks"
+namespace="easytrade"
+service="easytrade-demo-service"
+job="easytrade-demo-service"
+First: Find available EasyTrade metrics
+
+In Grafana → Explore → Mimir datasource, run:
+
+{job="easytrade-demo-service"}
+
+Or to see metric names:
+
+count by (__name__) (
+  {job="easytrade-demo-service"}
+)
+
+This will show the actual metrics exposed by your application.
+
+Recommended Application Dashboard Panels
 1. Application Up Status
 up{
   job="easytrade-demo-service"
@@ -83,23 +110,13 @@ cluster="application-eks"
 🖥️ NODE METRICS
 1. Number of Nodes
 count(
-  kube_node_info{
+  kubelet_node_name{
     cluster="application-eks"
   }
 )
 
-Visualization:
 
-Stat
-2. Nodes Ready
-sum(
-  kube_node_status_condition{
-    cluster="application-eks",
-    condition="Ready",
-    status="true"
-  }
-)
-3. Node CPU Usage
+2. Node CPU Usage
 100 -
 (
   avg by (node) (
@@ -112,60 +129,34 @@ sum(
   ) * 100
 )
 
-⚠️ In your current Alloy config, you're scraping kubelet and cAdvisor, but not node-exporter directly. So node_cpu_seconds_total may not exist.
 
-For your current setup, use cAdvisor:
+3. Node memory Usage
 
-sum by (node) (
-  rate(
-    container_cpu_usage_seconds_total{
-      cluster="application-eks",
-      container!="",
-      image!=""
-    }[5m]
+100 *
+(
+  1 -
+  (
+    node_memory_MemAvailable_bytes{
+      cluster="application-eks"
+    }
+    /
+    node_memory_MemTotal_bytes{
+      cluster="application-eks"
+    }
   )
 )
-4. Node Memory Usage
-sum by (node) (
-  container_memory_working_set_bytes{
-    cluster="application-eks",
-    container!="",
-    image!=""
-  }
-)
+
 
 Visualization:
 
 Time series
 📦 POD METRICS
-5. Total Pods
-count(
-  kube_pod_info{
-    cluster="application-eks"
-  }
-)
-6. Running Pods
-count(
-  kube_pod_status_phase{
-    cluster="application-eks",
-    phase="Running"
-  } == 1
-)
-7. Pending Pods
-count(
-  kube_pod_status_phase{
-    cluster="application-eks",
-    phase="Pending"
-  } == 1
-)
-8. Failed Pods
-count(
-  kube_pod_status_phase{
-    cluster="application-eks",
-    phase="Failed"
-  } == 1
-)
-9. Pod CPU Usage
+Running Pods:
+===========
+sum(kubelet_running_pods)          # running pods
+
+Pod CPU Usage
+============
 sum by (namespace, pod) (
   rate(
     container_cpu_usage_seconds_total{
@@ -188,8 +179,6 @@ topk(
     )
   )
 )
-
-Very good for a Grafana demo.
 
 11. Pod Memory Usage
 sum by (namespace, pod) (
@@ -245,117 +234,4 @@ topk(
 
 These are very useful for your EasyTrade application.
 
-16. Desired Replicas
-kube_deployment_spec_replicas{
-  cluster="application-eks",
-  namespace="easytrade"
-}
-17. Available Replicas
-kube_deployment_status_replicas_available{
-  cluster="application-eks",
-  namespace="easytrade"
-}
-18. Replica Difference
 
-This helps detect deployment problems:
-
-kube_deployment_spec_replicas{
-  cluster="application-eks",
-  namespace="easytrade"
-}
--
-kube_deployment_status_replicas_available{
-  cluster="application-eks",
-  namespace="easytrade"
-}
-
-Expected:
-
-0 = Healthy 🟢
-
->0 = Problem 🔴
-🌐 NAMESPACE METRICS
-19. Pods Per Namespace
-count by (namespace) (
-  kube_pod_info{
-    cluster="application-eks"
-  }
-)
-20. CPU Usage Per Namespace
-sum by (namespace) (
-  rate(
-    container_cpu_usage_seconds_total{
-      cluster="application-eks",
-      container!="",
-      image!=""
-    }[5m]
-  )
-)
-21. Memory Usage Per Namespace
-sum by (namespace) (
-  container_memory_working_set_bytes{
-    cluster="application-eks",
-    container!="",
-    image!=""
-  }
-)
-3️⃣ EASYTRADE-SPECIFIC KUBERNETES DASHBOARD
-
-I recommend creating another dashboard specifically for:
-
-Namespace = easytrade
-Dashboard Variables
-
-Create variables:
-
-Cluster
-label_values(kube_pod_info, cluster)
-Namespace
-label_values(kube_pod_info{cluster="$cluster"}, namespace)
-
-Default:
-
-easytrade
-Pod
-label_values(
-  kube_pod_info{
-    cluster="$cluster",
-    namespace="$namespace"
-  },
-  pod
-)
-Recommended EasyTrade Panels
-Application Pods
-count(
-  kube_pod_info{
-    cluster="$cluster",
-    namespace="$namespace"
-  }
-)
-Application CPU
-sum(
-  rate(
-    container_cpu_usage_seconds_total{
-      cluster="$cluster",
-      namespace="$namespace",
-      container!="",
-      image!=""
-    }[5m]
-  )
-)
-Application Memory
-sum(
-  container_memory_working_set_bytes{
-    cluster="$cluster",
-    namespace="$namespace",
-    container!="",
-    image!=""
-  }
-)
-Application Restarts
-sum(
-  kube_pod_container_status_restarts_total{
-    cluster="$cluster",
-    namespace="$namespace"
-  }
-)
