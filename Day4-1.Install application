@@ -61,6 +61,8 @@ components:
         service.beta.kubernetes.io/aws-load-balancer-type: "external"
         service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
         service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+
+
 # ============================================================
 # DISABLE OBSERVABILITY BACKENDS BUNDLED WITH THE DEMO
 # ============================================================
@@ -76,20 +78,30 @@ components:
 #
 # Therefore we don't need duplicate backends in application-eks.
 # ============================================================
+
 jaeger:
   enabled: false
+
 prometheus:
   enabled: false
+
 grafana:
   enabled: false
+
 opensearch:
   enabled: false
+
+
 # ============================================================
 # OPENTELEMETRY COLLECTOR
 # ============================================================
+
 opentelemetry-collector:
+
   config:
+
     exporters:
+
       # --------------------------------------------------------
       # Send telemetry to Alloy
       #
@@ -102,15 +114,22 @@ opentelemetry-collector:
       # OTLP gRPC:
       #   4317
       # --------------------------------------------------------
+
       otlp/alloy:
         endpoint: alloy.alloy.svc.cluster.local:4317
+
         tls:
           insecure: true
+
+
     service:
+
       pipelines:
+
         # ------------------------------------------------------
         # TRACES
         # ------------------------------------------------------
+
         traces:
           exporters:
             - span_metrics
@@ -125,6 +144,7 @@ opentelemetry-collector:
         # ------------------------------------------------------
         # LOGS
         # ------------------------------------------------------
+
         logs:
           exporters:
             - otlp/alloy
@@ -170,14 +190,12 @@ alloy-values.yaml
 =================
 
 alloy:
-
   configMap:
-
     content: |
 
-      // =====================================================
-      // LOGGING
-      // =====================================================
+      // ============================================================
+      // ALLOY LOGGING
+      // ============================================================
 
       logging {
         level  = "info"
@@ -185,134 +203,139 @@ alloy:
       }
 
 
-      // =====================================================
-      // REMOTE WRITE TO MIMIR
-      // =====================================================
+      // ============================================================
+      // MIMIR
+      // Metrics destination
+      // ============================================================
 
       prometheus.remote_write "mimir" {
-
         endpoint {
-
           url = "http://a1704a08f300d4ca2bf46e769601ced1-b7e86d6cf8189924.elb.ap-south-1.amazonaws.com/api/v1/push"
-
         }
-
       }
 
 
-      // =====================================================
-      // DISCOVER KUBERNETES NODES
-      // =====================================================
+      // ============================================================
+      // KUBERNETES NODE DISCOVERY
+      // Used for infrastructure metrics
+      // ============================================================
 
       discovery.kubernetes "nodes" {
-
         role = "node"
-
       }
 
 
-      // =====================================================
+      // ============================================================
       // KUBELET METRICS
-      //
-      // Collect:
-      //
-      // kubelet runtime metrics
-      // node capacity
-      // pod information
-      // =====================================================
+      // Node / Kubernetes metrics
+      // ============================================================
 
       discovery.relabel "kubelet" {
-
         targets = discovery.kubernetes.nodes.targets
 
-
-        // -------------------------------------------------
-        // USE NODE INTERNAL IP + KUBELET PORT
-        // -------------------------------------------------
-
         rule {
-
-          source_labels = [
-            "__meta_kubernetes_node_address_InternalIP",
-          ]
-
-          regex = "(.+)"
-
+          source_labels = ["__meta_kubernetes_node_address_InternalIP"]
+          regex        = "(.+)"
           target_label = "__address__"
-
-          replacement = "$1:10250"
-
+          replacement  = "$1:10250"
         }
 
-
-        // -------------------------------------------------
-        // KUBELET METRICS PATH
-        // -------------------------------------------------
-
         rule {
-
           target_label = "__metrics_path__"
-
-          replacement = "/metrics"
-
+          replacement  = "/metrics"
         }
 
-
-        // -------------------------------------------------
-        // CLUSTER LABEL
-        // -------------------------------------------------
-
         rule {
-
           target_label = "cluster"
-
-          replacement = "application-eks"
-
+          replacement  = "application-eks"
         }
-
-
-        // -------------------------------------------------
-        // NODE LABEL
-        // -------------------------------------------------
 
         rule {
-
-          source_labels = [
-            "__meta_kubernetes_node_name",
-          ]
-
+          source_labels = ["__meta_kubernetes_node_name"]
           target_label = "node"
-
         }
-
       }
-
 
       prometheus.scrape "kubelet" {
-
         targets = discovery.relabel.kubelet.output
-
 
         forward_to = [
           prometheus.remote_write.mimir.receiver,
         ]
 
-
-        scheme = "https"
-
-
+        scheme          = "https"
         scrape_interval = "30s"
-
-
-        scrape_timeout = "10s"
-
+        scrape_timeout  = "10s"
 
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
+        tls_config {
+          insecure_skip_verify = true
+        }
+      }
+
+
+      // ============================================================
+      // CADVISOR METRICS
+      // Container / pod resource metrics
+      // ============================================================
+
+      discovery.relabel "cadvisor" {
+        targets = discovery.kubernetes.nodes.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_node_address_InternalIP"]
+          regex        = "(.+)"
+          target_label = "__address__"
+          replacement  = "$1:10250"
+        }
+
+        rule {
+          target_label = "__metrics_path__"
+          replacement  = "/metrics/cadvisor"
+        }
+
+        rule {
+          target_label = "cluster"
+          replacement  = "application-eks"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label = "node"
+        }
+      }
+
+      prometheus.scrape "cadvisor" {
+        targets = discovery.relabel.cadvisor.output
+
+        forward_to = [
+          prometheus.remote_write.mimir.receiver,
+        ]
+
+        scheme          = "https"
+        scrape_interval = "30s"
+        scrape_timeout  = "10s"
+
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
         tls_config {
-
           insecure_skip_verify = true
+        }
+      }
+
+
+        // =====================================================
+      // NODE EXPORTER DISCOVERY
+      // =====================================================
+
+      discovery.kubernetes "node_exporter_pods" {
+
+        role = "pod"
+
+        namespaces {
+
+          names = ["monitoring"]
 
         }
 
@@ -320,57 +343,65 @@ alloy:
 
 
       // =====================================================
-      // CADVISOR CONTAINER METRICS
-      //
-      // Collect:
-      //
-      // container_cpu_usage_seconds_total
-      // container_memory_working_set_bytes
-      // container_network_receive_bytes_total
-      // container_network_transmit_bytes_total
-      //
+      // FILTER NODE EXPORTER PODS
       // =====================================================
 
-      discovery.relabel "cadvisor" {
+      discovery.relabel "node_exporter" {
 
-        targets = discovery.kubernetes.nodes.targets
+        targets = discovery.kubernetes.node_exporter_pods.targets
 
 
-        // -------------------------------------------------
-        // USE NODE INTERNAL IP + KUBELET PORT
-        // -------------------------------------------------
+        // Keep only Node Exporter pods
 
         rule {
 
           source_labels = [
-            "__meta_kubernetes_node_address_InternalIP",
+            "__meta_kubernetes_pod_label_app_kubernetes_io_name",
           ]
 
-          regex = "(.+)"
+          regex = "prometheus-node-exporter"
 
-          target_label = "__address__"
-
-          replacement = "$1:10250"
+          action = "keep"
 
         }
 
 
-        // -------------------------------------------------
-        // CADVISOR METRICS PATH
-        // -------------------------------------------------
+        // Keep port 9100
 
         rule {
 
-          target_label = "__metrics_path__"
+          source_labels = [
+            "__meta_kubernetes_pod_container_port_number",
+          ]
 
-          replacement = "/metrics/cadvisor"
+          regex = "9100"
+
+          action = "keep"
 
         }
 
 
-        // -------------------------------------------------
-        // CLUSTER LABEL
-        // -------------------------------------------------
+        // Create pod IP:9100 address
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_pod_ip",
+            "__meta_kubernetes_pod_container_port_number",
+          ]
+
+          separator = ":"
+
+          regex = "(.+):(.+)"
+
+          target_label = "__address__"
+
+          replacement = "$1:$2"
+
+        }
+
+
+        // Add cluster label
 
         rule {
 
@@ -381,34 +412,49 @@ alloy:
         }
 
 
-        // -------------------------------------------------
-        // NODE LABEL
-        // -------------------------------------------------
+        // Add node label
 
         rule {
 
           source_labels = [
-            "__meta_kubernetes_node_name",
+            "__meta_kubernetes_pod_node_name",
           ]
 
           target_label = "node"
 
         }
 
+
+        // Add namespace label
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_namespace",
+          ]
+
+          target_label = "namespace"
+        }
+        // Job label
+
+        rule {
+          target_label = "job"
+          replacement = "node-exporter"
+        }
       }
+      // =====================================================
+      // SCRAPE NODE EXPORTER
+      // =====================================================
 
+      prometheus.scrape "node_exporter" {
 
-      prometheus.scrape "cadvisor" {
-
-        targets = discovery.relabel.cadvisor.output
+        targets =
+          discovery.relabel.node_exporter.output
 
 
         forward_to = [
           prometheus.remote_write.mimir.receiver,
         ]
-
-
-        scheme = "https"
 
 
         scrape_interval = "30s"
@@ -417,31 +463,144 @@ alloy:
         scrape_timeout = "10s"
 
 
-        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-
-
-        tls_config {
-
-          insecure_skip_verify = true
-
-        }
+        metrics_path = "/metrics"
 
       }
 
-controller:
-  type: deployment
-  replicas: 1
-rbac:
-  create: true
-serviceAccount:
-  create: true
-  automountServiceAccountToken: true
+
+      // ============================================================
+      // OTLP RECEIVER
+      //
+      // OpenTelemetry Demo sends:
+      //   Metrics -> 4317/4318
+      //   Logs    -> 4317/4318
+      //   Traces  -> 4317/4318
+      // ============================================================
+
+      otelcol.receiver.otlp "demo" {
+
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+
+        output {
+          metrics = [otelcol.processor.batch.metrics.input]
+          logs    = [otelcol.processor.batch.logs.input]
+          traces  = [otelcol.processor.batch.traces.input]
+        }
+      }
+
+
+      // ============================================================
+      // METRICS PIPELINE
+      //
+      // OpenTelemetry Demo
+      //       ↓
+      //     Alloy
+      //       ↓
+      //     Mimir
+      // ============================================================
+
+      otelcol.processor.batch "metrics" {
+        timeout = "5s"
+
+        output {
+          metrics = [
+            otelcol.exporter.prometheus.mimir.input,
+          ]
+        }
+      }
+
+      otelcol.exporter.prometheus "mimir" {
+        forward_to = [
+          prometheus.remote_write.mimir.receiver,
+        ]
+      }
+
+
+      // ============================================================
+      // LOGS PIPELINE
+      //
+      // OpenTelemetry Demo
+      //       ↓
+      //     Alloy
+      //       ↓
+      //      Loki
+      // ============================================================
+
+      otelcol.processor.batch "logs" {
+        timeout = "5s"
+
+        output {
+          logs = [
+            otelcol.exporter.otlphttp.loki.input,
+          ]
+        }
+      }
+
+      otelcol.exporter.otlphttp "loki" {
+        client {
+          endpoint = "http://k8s-monitori-lokiinge-d8e456dbbc-018858428e78dbf7.elb.ap-south-1.amazonaws.com:3100/otlp"
+        }
+      }
+
+
+      // ============================================================
+      // TRACES PIPELINE
+      //
+      // OpenTelemetry Demo
+      //       ↓
+      //     Alloy
+      //       ↓
+      //     Tempo
+      // ============================================================
+
+      otelcol.processor.batch "traces" {
+        timeout = "5s"
+
+        output {
+          traces = [
+            otelcol.exporter.otlp.tempo.input,
+          ]
+        }
+      }
+
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "k8s-monitori-tempoing-fbf1871f50-880763c76da130a2.elb.ap-south-1.amazonaws.com:4317"
+
+          tls {
+            insecure = true
+          }
+        }
+      }
+
+
+  # ==============================================================
+  # ALLOY DEPLOYMENT
+  # ==============================================================
+
+  controller:
+    type: deployment
+    replicas: 1
+
+  rbac:
+    create: true
+
+  serviceAccount:
+    create: true
+    automountServiceAccountToken: true
+
 
 
 helm upgrade --install alloy \
-  grafana/alloy \
-  --namespace alloy \
-  --values alloy-values.yaml
+grafana/alloy \
+-n alloy  -f updated-alloy-values.yaml \
+--set controller.type=deployment
 
 kubectl logs -n otel-demo deployment/otel-collector --tail=200
 kubectl logs -n otel-demo deployment/otel-collector --tail=300 \
