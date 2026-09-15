@@ -1,0 +1,509 @@
+Deploy OpenTelemetry Demo
+
+application-eks
+└── otel-demo namespace
+    ├── frontend
+    ├── frontend-proxy
+    ├── cart
+    ├── checkout
+    ├── currency
+    ├── email
+    ├── payment
+    ├── product-catalog
+    ├── recommendation
+    ├── shipping
+    └── other demo microservices
+
+
+helm repo add open-telemetry \
+  https://open-telemetry.github.io/opentelemetry-helm-charts
+helm repo update
+
+helm search repo open-telemetry/opentelemetry-demo
+
+Create namespace:
+=================
+kubectl create namespace otel-demo
+
+vi otel-demo-values.yaml
+========================
+# ============================================================
+# OpenTelemetry Demo
+# application-eks
+#
+# Architecture:
+#
+# OpenTelemetry Demo
+#        |
+#        v
+# Demo OTEL Collector
+#        |
+#        | OTLP gRPC
+#        v
+# Alloy
+#   |      |      |
+#   v      v      v
+# Mimir   Loki   Tempo
+#
+# ============================================================
+
+
+# ============================================================
+# FRONTEND PROXY
+# ============================================================
+
+components:
+  frontend-proxy:
+    service:
+      type: LoadBalancer
+
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-type: "external"
+        service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+        service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+# ============================================================
+# DISABLE OBSERVABILITY BACKENDS BUNDLED WITH THE DEMO
+# ============================================================
+#
+# We already have:
+#
+#   Grafana
+#   Mimir
+#   Loki
+#   Tempo
+#
+# in monitoring-eks.
+#
+# Therefore we don't need duplicate backends in application-eks.
+# ============================================================
+jaeger:
+  enabled: false
+prometheus:
+  enabled: false
+grafana:
+  enabled: false
+opensearch:
+  enabled: false
+# ============================================================
+# OPENTELEMETRY COLLECTOR
+# ============================================================
+opentelemetry-collector:
+  config:
+    exporters:
+      # --------------------------------------------------------
+      # Send telemetry to Alloy
+      #
+      # Alloy service:
+      #   alloy
+      #
+      # Namespace:
+      #   alloy
+      #
+      # OTLP gRPC:
+      #   4317
+      # --------------------------------------------------------
+      otlp/alloy:
+        endpoint: alloy.alloy.svc.cluster.local:4317
+        tls:
+          insecure: true
+    service:
+      pipelines:
+        # ------------------------------------------------------
+        # TRACES
+        # ------------------------------------------------------
+        traces:
+          exporters:
+            - span_metrics
+            - otlp/alloy
+        # ------------------------------------------------------
+        # METRICS
+        # ------------------------------------------------------
+
+        metrics:
+          exporters:
+            - otlp/alloy
+        # ------------------------------------------------------
+        # LOGS
+        # ------------------------------------------------------
+        logs:
+          exporters:
+            - otlp/alloy
+
+
+helm install otel-demo \
+open-telemetry/opentelemetry-demo \
+-n otel-demo \
+-f otel-demo-values.yaml
+
+kubectl get pods -n otel-demo
+
+kubectl get svc -n otel-demo
+
+kubectl get svc \
+-n otel-demo \
+otel-demo-frontendproxy
+
+ kubectl patch svc alloy -n alloy --type='json' -p='[
+  {"op":"add","path":"/spec/ports/-","value":{"name":"otlp-grpc","port":4317,"protocol":"TCP","targetPort":4317}},
+  {"op":"add","path":"/spec/ports/-","value":{"name":"otlp-http","port":4318,"protocol":"TCP","targetPort":4318}}
+]'
+
+
+Verify the frontend LoadBalancer:
+=============================
+kubectl get svc -n otel-demo frontend-proxy
+
+
+
+OpenTelemetry Collector / Agent
+OpenTelemetry Demo
+        |
+        | OTLP
+        v
+OpenTelemetry Collector
+        |
+        v
+Alloy
+
+
+alloy-values.yaml
+=================
+
+alloy:
+
+  configMap:
+
+    content: |
+
+      // =====================================================
+      // LOGGING
+      // =====================================================
+
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+
+      // =====================================================
+      // REMOTE WRITE TO MIMIR
+      // =====================================================
+
+      prometheus.remote_write "mimir" {
+
+        endpoint {
+
+          url = "http://a1704a08f300d4ca2bf46e769601ced1-b7e86d6cf8189924.elb.ap-south-1.amazonaws.com/api/v1/push"
+
+        }
+
+      }
+
+
+      // =====================================================
+      // DISCOVER KUBERNETES NODES
+      // =====================================================
+
+      discovery.kubernetes "nodes" {
+
+        role = "node"
+
+      }
+
+
+      // =====================================================
+      // KUBELET METRICS
+      //
+      // Collect:
+      //
+      // kubelet runtime metrics
+      // node capacity
+      // pod information
+      // =====================================================
+
+      discovery.relabel "kubelet" {
+
+        targets = discovery.kubernetes.nodes.targets
+
+
+        // -------------------------------------------------
+        // USE NODE INTERNAL IP + KUBELET PORT
+        // -------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_node_address_InternalIP",
+          ]
+
+          regex = "(.+)"
+
+          target_label = "__address__"
+
+          replacement = "$1:10250"
+
+        }
+
+
+        // -------------------------------------------------
+        // KUBELET METRICS PATH
+        // -------------------------------------------------
+
+        rule {
+
+          target_label = "__metrics_path__"
+
+          replacement = "/metrics"
+
+        }
+
+
+        // -------------------------------------------------
+        // CLUSTER LABEL
+        // -------------------------------------------------
+
+        rule {
+
+          target_label = "cluster"
+
+          replacement = "application-eks"
+
+        }
+
+
+        // -------------------------------------------------
+        // NODE LABEL
+        // -------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_node_name",
+          ]
+
+          target_label = "node"
+
+        }
+
+      }
+
+
+      prometheus.scrape "kubelet" {
+
+        targets = discovery.relabel.kubelet.output
+
+
+        forward_to = [
+          prometheus.remote_write.mimir.receiver,
+        ]
+
+
+        scheme = "https"
+
+
+        scrape_interval = "30s"
+
+
+        scrape_timeout = "10s"
+
+
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+
+        tls_config {
+
+          insecure_skip_verify = true
+
+        }
+
+      }
+
+
+      // =====================================================
+      // CADVISOR CONTAINER METRICS
+      //
+      // Collect:
+      //
+      // container_cpu_usage_seconds_total
+      // container_memory_working_set_bytes
+      // container_network_receive_bytes_total
+      // container_network_transmit_bytes_total
+      //
+      // =====================================================
+
+      discovery.relabel "cadvisor" {
+
+        targets = discovery.kubernetes.nodes.targets
+
+
+        // -------------------------------------------------
+        // USE NODE INTERNAL IP + KUBELET PORT
+        // -------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_node_address_InternalIP",
+          ]
+
+          regex = "(.+)"
+
+          target_label = "__address__"
+
+          replacement = "$1:10250"
+
+        }
+
+
+        // -------------------------------------------------
+        // CADVISOR METRICS PATH
+        // -------------------------------------------------
+
+        rule {
+
+          target_label = "__metrics_path__"
+
+          replacement = "/metrics/cadvisor"
+
+        }
+
+
+        // -------------------------------------------------
+        // CLUSTER LABEL
+        // -------------------------------------------------
+
+        rule {
+
+          target_label = "cluster"
+
+          replacement = "application-eks"
+
+        }
+
+
+        // -------------------------------------------------
+        // NODE LABEL
+        // -------------------------------------------------
+
+        rule {
+
+          source_labels = [
+            "__meta_kubernetes_node_name",
+          ]
+
+          target_label = "node"
+
+        }
+
+      }
+
+
+      prometheus.scrape "cadvisor" {
+
+        targets = discovery.relabel.cadvisor.output
+
+
+        forward_to = [
+          prometheus.remote_write.mimir.receiver,
+        ]
+
+
+        scheme = "https"
+
+
+        scrape_interval = "30s"
+
+
+        scrape_timeout = "10s"
+
+
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+
+        tls_config {
+
+          insecure_skip_verify = true
+
+        }
+
+      }
+
+controller:
+  type: deployment
+  replicas: 1
+rbac:
+  create: true
+serviceAccount:
+  create: true
+  automountServiceAccountToken: true
+
+
+helm upgrade --install alloy \
+  grafana/alloy \
+  --namespace alloy \
+  --values alloy-values.yaml
+
+kubectl logs -n otel-demo deployment/otel-collector --tail=200
+kubectl logs -n otel-demo deployment/otel-collector --tail=300 \
+  | grep -iE "error|failed|refused|timeout|export"
+
+
+kubectl logs -n alloy deployment/alloy --tail=300
+
+Test connectivity from the Demo namespace
+
+kubectl run curl-test   --rm -it   --restart=Never   --image=curlimages/curl:8.10.1   -- curl -v   "http://a1704a08f300d4ca2bf46e769601ced1-b7e86d6cf8189924.elb.ap-south-1.amazonaws.com/api/v1/push"
+
+Inside this pod run:
+nc -zv alloy.alloy.svc.cluster.local 4317
+nc -zv alloy.alloy.svc.cluster.local 4318
+
+Expected:
+=========
+alloy.alloy.svc.cluster.local (172.20.x.x:4317) open
+
+
+Verify the Collector:
+===================
+kubectl get pods -n otel-demo | grep otel-collector
+
+Then check logs:
+===============
+kubectl logs -n otel-demo daemonset/otel-collector-agent --tail=100
+kubectl logs -n otel-demo daemonset/otel-collector-agent --tail=300 \
+  | grep -iE "error|failed|export|alloy"
+
+Generate traffic:
+================
+Application already has load-generator
+
+kubectl get svc -n otel-demo frontend-proxy
+
+for i in {1..20}; do
+  curl -s "http://$OTEL_DEMO_URL" > /dev/null
+done
+
+
+Verify traces in Tempo:
+======================
+kubectl logs -n alloy deployment/alloy --tail=500 \
+  | grep -iE "tempo|trace|otlp"
+
+
+Verify metrics in Mimir:
+======================
+
+Verify Alloy → Mimir metrics pipeline
+
+Kubernetes Nodes
+       |
+       +---- kubelet /metrics
+       |
+       +---- cAdvisor /metrics/cadvisor
+       |
+       v
+     Alloy
+       |
+       | Prometheus remote_write
+       v
+      Mimir
