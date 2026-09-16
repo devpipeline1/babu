@@ -9,6 +9,15 @@ Prerequisite:
 8.Install Grafana
 9.Deploy Loki
 10.Deploy Tempo
+11.Install node exporter
+
+
+Check Mimir/Loki/Tempo connectivity:
+===================================
+
+curl -I http://k8s-monitori-promethe-e0617ba28f-d5c130e99c27d8ba.elb.ap-south-1.amazonaws.com:80/-/ready
+curl -s http://k8s-monitori-lokiinge-a09257c812-8872d6d59604b187.elb.ap-south-1.amazonaws.com:3100/ready
+nc -vz -w5 k8s-monitori-tempoing-55de63d743-8734675630922384.elb.ap-south-1.amazonaws.com 4317
 
 
 Deploy OpenTelemetry Demo
@@ -179,6 +188,16 @@ opentelemetry-collector:
             - otlp/alloy
 
 
+
+Before deploying application check load balancer controller installed or not:
+============================================================================
+kubectl get pods \
+  -n kube-system \
+  -l app.kubernetes.io/name=aws-load-balancer-controller
+
+
+Deploy application:
+==================
 helm install otel-demo \
 open-telemetry/opentelemetry-demo \
 -n otel-demo \
@@ -186,33 +205,28 @@ open-telemetry/opentelemetry-demo \
 
 kubectl get pods -n otel-demo
 
+kubectl get pods -n otel-demo | grep otel-collector  
+
 kubectl get svc -n otel-demo
 
-kubectl get svc \
--n otel-demo \
-otel-demo-frontendproxy
+The below service only interact with user from internet:
+=======================================================
+kubectl get svc -n otel-demo frontend-proxy
 
  kubectl patch svc alloy -n alloy --type='json' -p='[
   {"op":"add","path":"/spec/ports/-","value":{"name":"otlp-grpc","port":4317,"protocol":"TCP","targetPort":4317}},
   {"op":"add","path":"/spec/ports/-","value":{"name":"otlp-http","port":4318,"protocol":"TCP","targetPort":4318}}
 ]'
 
-
-Verify the frontend LoadBalancer:
-=============================
-kubectl get svc -n otel-demo frontend-proxy
-
-
-
-OpenTelemetry Collector / Agent
 OpenTelemetry Demo
         |
+OpenTelemetry Collector / Agent
         | OTLP
-        v
-OpenTelemetry Collector
         |
         v
-Alloy
+      Alloy
+
+
 
 
 Install Node Exporter (for node metrics)
@@ -674,22 +688,45 @@ alloy:
     automountServiceAccountToken: true
 
 
+Create nemespace for alloy:
+==========================
+kubectl create namespace alloy
 
+Install Alloy:
+==============
 helm upgrade --install alloy \
 grafana/alloy \
--n alloy  -f updated-alloy-values.yaml \
+-n alloy  -f alloy-values.yaml \
 --set controller.type=deployment
+
+
+
+kubectl logs -n alloy deployment/alloy --tail=300
+
 
 kubectl logs -n otel-demo deployment/otel-collector --tail=200
 kubectl logs -n otel-demo deployment/otel-collector --tail=300 \
   | grep -iE "error|failed|refused|timeout|export"
 
+Check whether metrics reach to mimir-gateway:
+============================================
 
-kubectl logs -n alloy deployment/alloy --tail=300
+$ curl -G \
+  "http://ae92c39526c0c441baaf3caf8105c128-58f08b5a224ec8ba.elb.ap-south-1.amazonaws.com/prometheus/api/v1/query" \
+  --data-urlencode 'query=up'
 
-Test connectivity from the Demo namespace
+$ curl -G \
+  "http://ae92c39526c0c441baaf3caf8105c128-58f08b5a224ec8ba.elb.ap-south-1.amazonaws.com/prometheus/api/v1/query" \
+  --data-urlencode 'query=count({cluster="application-eks"})'
 
-kubectl run curl-test   --rm -it   --restart=Never   --image=curlimages/curl:8.10.1   -- curl -v   "http://a1704a08f300d4ca2bf46e769601ced1-b7e86d6cf8189924.elb.ap-south-1.amazonaws.com/api/v1/push"
+$ curl -G \
+  "http://ae92c39526c0c441baaf3caf8105c128-58f08b5a224ec8ba.elb.ap-south-1.amazonaws.com/prometheus/api/v1/query" \
+  --data-urlencode 'query=node_cpu_seconds_total'
+
+
+Test 4317 and 4318 port connectivity
+====================================
+
 
 Inside this pod run:
 nc -zv alloy.alloy.svc.cluster.local 4317
@@ -700,25 +737,11 @@ Expected:
 alloy.alloy.svc.cluster.local (172.20.x.x:4317) open
 
 
-Verify the Collector:
-===================
-kubectl get pods -n otel-demo | grep otel-collector
-
-Then check logs:
-===============
+Then check otel-collector logs:
+==============================
 kubectl logs -n otel-demo daemonset/otel-collector-agent --tail=100
 kubectl logs -n otel-demo daemonset/otel-collector-agent --tail=300 \
   | grep -iE "error|failed|export|alloy"
-
-Generate traffic:
-================
-Application already has load-generator
-
-kubectl get svc -n otel-demo frontend-proxy
-
-for i in {1..20}; do
-  curl -s "http://$OTEL_DEMO_URL" > /dev/null
-done
 
 
 Verify traces in Tempo:
@@ -746,24 +769,24 @@ Kubernetes Nodes
       Mimir
 
 
-                    APPLICATION EKS
-                          │
-        ┌─────────────────┴──────────────────┐
-        │                                    │
-   Kubernetes metrics                  OTEL Demo
-        │                                    │
-        ▼                                    ▼
-      Alloy                         Demo OTEL Collector
-        │                                    │
-        │                                    │ OTLP
-        │                                    ▼
-        │                                  Alloy
-        │                                    │
-        └────────────────┬───────────────────┘
-                         │
-                 ┌───────┼────────┐
-                 ▼       ▼        ▼
-               Mimir   Loki     Tempo
+Kubernetes Nodes
+       |
+       +---- kubelet /metrics
+       |
+       +---- cAdvisor /metrics/cadvisor
+       |
+       +---- Node Exporter /metrics
+       |
+Application Pods
+       |
+       +---- OTel Collector Agent (metrics/traces/logs)
+       v
+     Alloy
+       |
+       | Prometheus remote_write
+       v
+      Mimir
+     
 
 
                  Alloy
