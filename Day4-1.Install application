@@ -213,10 +213,6 @@ The below service only interact with user from internet:
 =======================================================
 kubectl get svc -n otel-demo frontend-proxy
 
- kubectl patch svc alloy -n alloy --type='json' -p='[
-  {"op":"add","path":"/spec/ports/-","value":{"name":"otlp-grpc","port":4317,"protocol":"TCP","targetPort":4317}},
-  {"op":"add","path":"/spec/ports/-","value":{"name":"otlp-http","port":4318,"protocol":"TCP","targetPort":4318}}
-]'
 
 OpenTelemetry Demo
         |
@@ -723,10 +719,21 @@ $ curl -G \
   "http://ae92c39526c0c441baaf3caf8105c128-58f08b5a224ec8ba.elb.ap-south-1.amazonaws.com/prometheus/api/v1/query" \
   --data-urlencode 'query=node_cpu_seconds_total'
 
+add port 4317 and 4318 in alloy service:
+=======================================
+ kubectl patch svc alloy -n alloy --type='json' -p='[
+  {"op":"add","path":"/spec/ports/-","value":{"name":"otlp-grpc","port":4317,"protocol":"TCP","targetPort":4317}},
+  {"op":"add","path":"/spec/ports/-","value":{"name":"otlp-http","port":4318,"protocol":"TCP","targetPort":4318}}
+]'
+
 
 Test 4317 and 4318 port connectivity
 ====================================
-
+kubectl run network-test \
+  --image=curlimages/curl:8.10.1 \
+  --restart=Never \
+  --rm -it \
+  -- sh
 
 Inside this pod run:
 nc -zv alloy.alloy.svc.cluster.local 4317
@@ -805,3 +812,15 @@ Application Pods
           │ Mimir Loki      │
           │ Tempo Grafana   │
           └─────────────────┘
+
+Loki:
+====
+http://loki.monitoring.svc.cluster.local:3100
+
+Tempo:
+=====
+http://tempo.monitoring.svc.cluster.local:3200
+
+Mimir:
+======
+http://mimir-gateway.monitoring.svc.cluster.local/prometheus
