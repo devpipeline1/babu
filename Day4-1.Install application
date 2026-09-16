@@ -1,3 +1,16 @@
+Prerequisite:
+1.Network setup
+2.Cluster setup
+3.AWS load balancer controller creation
+4.Create S3+IAM service account for Mimir,loki and tempo
+5.Install Grafana Mimir
+6.Create internel load balancer for Mimir
+7.Internel Load Balancer for Loki and tempo
+8.Install Grafana
+9.Deploy Loki
+10.Deploy Tempo
+11.Install Node exporter
+
 Deploy OpenTelemetry Demo
 
 application-eks
