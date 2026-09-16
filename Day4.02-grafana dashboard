@@ -9,6 +9,92 @@ Application Pods → OTel SDK (logs) → OTel Collector Agent → Alloy → Loki
 Application Pods → OTel SDK (traces) → OTel Collector Agent → Alloy → Tempo → Grafana
 
 
-
+kubectl edit configmap flagd-config -n otel-demo 
 
 sum by(http_connection_state) (http_client_open_connections)
+
+
+
+
+
+                 USER REPORT
+                     │
+                     ▼
+              "Checkout slow"
+                     │
+                     ▼
+            ┌─────────────────┐
+            │ REQUEST RATE    │
+            │ checkout = 8/s  │
+            └────────┬────────┘
+                     │
+                     ▼
+            ┌─────────────────┐
+            │ P95 LATENCY     │
+            │ checkout = 3.2s │
+            └────────┬────────┘
+                     │
+                     ▼
+            ┌─────────────────┐
+            │ ERROR RATE      │
+            │ checkout = 8%   │
+            └────────┬────────┘
+                     │
+                     ▼
+                 LOKI
+                     │
+                     ▼
+             "payment timeout"
+                     │
+                     ▼
+                 TEMPO
+                     │
+                     ▼
+          checkout → payment
+                     │
+                     ▼
+             payment span
+                = 2.9s
+                     │
+                     ▼
+              DB operation
+                = 2.7s
+                     │
+                     ▼
+             POSTGRESQL
+                     │
+                     ▼
+             ROOT CAUSE
+
+
+
+
+              ┌──────────────┐
+              │    METRICS   │
+              └──────┬───────┘
+                     │
+              Identify service
+                     │
+                     ▼
+              ┌──────────────┐
+              │     LOGS     │
+              └──────┬───────┘
+                     │
+              Find error/event
+                     │
+                     ▼
+              ┌──────────────┐
+              │    TRACES    │
+              └──────┬───────┘
+                     │
+             Find slow/error span
+                     │
+                     ▼
+              ┌──────────────┐
+              │ INFRASTRUCTURE│
+              └──────┬───────┘
+                     │
+               Validate cause
+                     │
+                     ▼
+                 RESOLVE
