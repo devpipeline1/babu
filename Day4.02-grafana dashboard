@@ -1,0 +1,14 @@
+
+1. Metrics Flow
+Application Pods → OTel SDK (metrics) → OTel Collector Agent → Alloy → Mimir → Grafana
+
+2. Logs Flow
+Application Pods → OTel SDK (logs) → OTel Collector Agent → Alloy → Loki → Grafana
+
+3. Traces Flow
+Application Pods → OTel SDK (traces) → OTel Collector Agent → Alloy → Tempo → Grafana
+
+
+
+
+sum by(http_connection_state) (http_client_open_connections)
