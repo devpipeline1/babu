@@ -9,7 +9,7 @@ Prerequisite:
 8.Install Grafana
 9.Deploy Loki
 10.Deploy Tempo
-11.Install Node exporter
+
 
 Deploy OpenTelemetry Demo
 
@@ -27,6 +27,17 @@ application-eks
     ├── shipping
     └── other demo microservices
 
+                    Frontend
+                       │
+        ┌──────────────┼──────────────┐
+        │              │              │
+       Cart        Product        Checkout
+                       │              │
+                 Recommendation   Payment
+                       │              │
+                   Ad Service      Email
+                                      │
+                                   Shipping
 
 helm repo add open-telemetry \
   https://open-telemetry.github.io/opentelemetry-helm-charts
@@ -202,6 +213,55 @@ OpenTelemetry Collector
         |
         v
 Alloy
+
+
+Install Node Exporter (for node metrics)
+========================================
+
+├── Node Exporter
+│     │
+│     ├── CPU
+│     ├── Memory
+│     ├── Disk
+│     ├── Filesystem
+│     ├── Network
+│     └── Load
+
+Connect to application cluster
+
+$ kubectl config use-context application-eks
+
+Add Node Exporter repo:
+=====================
+
+helm repo add prometheus-community \
+  https://prometheus-community.github.io/helm-charts
+
+  helm repo update
+
+  kubectl create namespace monitoring
+
+Install Node Exporter:
+======================
+  helm upgrade --install node-exporter \
+  prometheus-community/prometheus-node-exporter \
+  --namespace monitoring
+
+  kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus-node-exporter
+
+  kubectl get svc -n monitoring
+
+  Test Node Exporter metrics:
+  ==========================
+kubectl run node-exporter-test \
+  -n monitoring \
+  --image=curlimages/curl \
+  --restart=Never \
+  --rm \
+  -it \
+  -- \
+  curl http://node-exporter-prometheus-node-exporter.monitoring.svc.cluster.local:9100/metrics
+
 
 
 alloy-values.yaml
@@ -684,3 +744,41 @@ Kubernetes Nodes
        | Prometheus remote_write
        v
       Mimir
+
+
+                    APPLICATION EKS
+                          │
+        ┌─────────────────┴──────────────────┐
+        │                                    │
+   Kubernetes metrics                  OTEL Demo
+        │                                    │
+        ▼                                    ▼
+      Alloy                         Demo OTEL Collector
+        │                                    │
+        │                                    │ OTLP
+        │                                    ▼
+        │                                  Alloy
+        │                                    │
+        └────────────────┬───────────────────┘
+                         │
+                 ┌───────┼────────┐
+                 ▼       ▼        ▼
+               Mimir   Loki     Tempo
+
+
+                 Alloy
+                   │
+       ┌───────────┼───────────┐
+       │           │           │
+       ▼           ▼           ▼
+   App OTLP    Kubernetes    Node/
+   telemetry      logs       infra
+       │           │           │
+       └───────────┼───────────┘
+                   ▼
+          ┌─────────────────┐
+          │ Monitoring VPC  │
+          │                 │
+          │ Mimir Loki      │
+          │ Tempo Grafana   │
+          └─────────────────┘
