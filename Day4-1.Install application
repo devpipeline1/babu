@@ -15,6 +15,12 @@ Prerequisite:
 Check Mimir/Loki/Tempo connectivity:
 ===================================
 
+kubectl run network-test \
+  --image=curlimages/curl:8.10.1 \
+  --restart=Never \
+  --rm -it \
+  -- sh
+
 curl -I http://k8s-monitori-promethe-e0617ba28f-d5c130e99c27d8ba.elb.ap-south-1.amazonaws.com:80/-/ready
 curl -s http://k8s-monitori-lokiinge-a09257c812-8872d6d59604b187.elb.ap-south-1.amazonaws.com:3100/ready
 nc -vz -w5 k8s-monitori-tempoing-55de63d743-8734675630922384.elb.ap-south-1.amazonaws.com 4317
