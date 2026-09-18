@@ -51,7 +51,7 @@ Deploy OpenTelemetry Demo
                          Grafana
 
 application-eks
-└── otel-demo namespace
+└── otel-application namespace
     ├── frontend
     ├── frontend-proxy
     ├── cart
@@ -89,7 +89,7 @@ open-telemetry/opentelemetry-demo       0.41.1          3.0.0           opentele
 
 Create namespace:
 =================
-kubectl create namespace otel-demo
+kubectl create namespace otel-application
 
 vi otel-demo-values.yaml
 ========================
@@ -239,18 +239,18 @@ Deploy application:
 ==================
 helm install otel-demo \
 open-telemetry/opentelemetry-demo \
--n otel-demo \
+-n otel-application \
 -f otel-demo-values.yaml
 
-kubectl get pods -n otel-demo
+kubectl get pods -n otel-application
 
-kubectl get pods -n otel-demo | grep otel-collector  
+kubectl get pods -n otel-application | grep otel-collector  
 
-kubectl get svc -n otel-demo
+kubectl get svc -n otel-application
 
 The below service only interact with user from internet:
 =======================================================
-kubectl get svc -n otel-demo frontend-proxy
+kubectl get svc -n otel-application frontend-proxy
 
 
 OpenTelemetry Demo
@@ -769,8 +769,8 @@ alloy   ClusterIP   172.20.157.205   <none>        12345/TCP   68s
 kubectl logs -n alloy deployment/alloy --tail=300
 
 
-kubectl logs -n otel-demo deployment/otel-collector --tail=200
-kubectl logs -n otel-demo deployment/otel-collector --tail=300 \
+kubectl logs -n otel-application deployment/otel-collector --tail=200
+kubectl logs -n otel-application deployment/otel-collector --tail=300 \
   | grep -iE "error|failed|refused|timeout|export"
 
 Check whether metrics reach to mimir-gateway:
@@ -815,8 +815,8 @@ alloy.alloy.svc.cluster.local (172.20.x.x:4317) open
 
 Then check otel-collector logs:
 ==============================
-kubectl logs -n otel-demo daemonset/otel-collector-agent --tail=100
-kubectl logs -n otel-demo daemonset/otel-collector-agent --tail=300 \
+kubectl logs -n otel-application daemonset/otel-collector-agent --tail=100
+kubectl logs -n otel-application daemonset/otel-collector-agent --tail=300 \
   | grep -iE "error|failed|export|alloy"
 
 
