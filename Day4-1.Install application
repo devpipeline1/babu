@@ -312,6 +312,29 @@ kubectl run node-exporter-test \
   curl http://node-exporter-prometheus-node-exporter.monitoring.svc.cluster.local:9100/metrics
 
 
+Kubernetes Nodes
+       |
+       +---- kubelet /metrics
+       |
+       +---- cAdvisor /metrics/cadvisor
+       |
+       +---- Node Exporter /metrics
+       |
+Application Pods
+       |
+       +---- OTel Collector Agent (metrics/traces/logs)
+       v
+     Alloy
+       |
+       | Prometheus remote_write
+       v
+      Mimir
+
+
+kubelet       → Kubernetes/node management view
+cAdvisor      → container/pod resource view
+Node Exporter → Linux operating-system view
+
 
 alloy-values.yaml
 =================
@@ -734,6 +757,13 @@ grafana/alloy \
 -n alloy  -f alloy-values.yaml \
 --set controller.type=deployment
 
+$ kubectl get pods -n alloy
+NAME                     READY   STATUS    RESTARTS   AGE
+alloy-6b849fc4d7-vtbk4   2/2     Running   0          48s
+
+$ kubectl get svc -n alloy
+NAME    TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)     AGE
+alloy   ClusterIP   172.20.157.205   <none>        12345/TCP   68s
 
 
 kubectl logs -n alloy deployment/alloy --tail=300
