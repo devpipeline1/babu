@@ -21,6 +21,34 @@ nc -vz -w5 k8s-monitori-tempoing-55de63d743-8734675630922384.elb.ap-south-1.amaz
 
 
 Deploy OpenTelemetry Demo
+=========================
+
+                    application-eks
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│  OpenTelemetry Demo                                     │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │ frontend / cart / payment / shipping / etc.       │  │
+│  └───────────────────────┬───────────────────────────┘  │
+│                          │ OTLP                         │
+│                          ▼                              │
+│              ┌───────────────────────┐                  │
+│              │ Demo OTEL Collector    │                 │
+│              └───────────┬───────────┘                  │
+│                          │ OTLP gRPC/http               │
+│                          ▼                              │
+│              ┌───────────────────────┐                  │
+│              │        Alloy           │                 │
+│              └───────┬────┬────┬─────┘                  │
+│                      │    │    │                        │
+└──────────────────────┼────┼────┼────────────────────────┘
+                       │    │    │
+                       ▼    ▼    ▼
+                     Mimir Loki Tempo
+                       │    │    │
+                       └────┼────┘
+                            ▼
+                         Grafana
 
 application-eks
 └── otel-demo namespace
@@ -78,7 +106,7 @@ vi otel-demo-values.yaml
 #        |
 #        | OTLP gRPC
 #        v
-# Alloy
+#      Alloy
 #   |      |      |
 #   v      v      v
 # Mimir   Loki   Tempo
@@ -159,11 +187,9 @@ opentelemetry-collector:
         tls:
           insecure: true
 
-
+      # What should happen to each telemetry signal
     service:
-
       pipelines:
-
         # ------------------------------------------------------
         # TRACES
         # ------------------------------------------------------
@@ -187,6 +213,19 @@ opentelemetry-collector:
           exporters:
             - otlp/alloy
 
+
+
+Trace ID: abc123
+
+frontend
+   │
+   ├── checkout span
+   │
+   ├── cart span
+   │
+   ├── payment span
+   │
+   └── shipping span
 
 
 Before deploying application check load balancer controller installed or not:
